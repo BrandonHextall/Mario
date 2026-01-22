@@ -1,0 +1,33 @@
+{
+	// See https://go.microsoft.com/fwlink/?LinkId=827846 to learn about workspace recommendations.
+	// Extension identifier format: ${publisher}.${name}. Example: vscode.csharp
+
+	// List of extensions which should be recommended for users of this workspace.
+	"recommendations":
+	[
+		"carrie999.cyberpunk-2020",
+		"ms-vsliveshare.vsliveshare",
+		"ritwickdey.liveserver",
+		"sburg.vscode-javascript-booster",
+		"esbenp.prettier-vscode",
+		"tyriar.sort-lines",
+		"digitalbrainstem.javascript-ejs-support",
+		"ms-vscode.live-server",
+		"PKief.material-icon-theme",
+		"dbaeumer.vscode-eslint"
+	],
+	// List of extensions recommended by VS Code that should not be recommended for users of this workspace.
+	"unwantedRecommendations":
+	[
+		"firefox-devtools.vscode-firefox-debug",
+		"ms-python.python",
+		"ms-dotnettools.vscode-dotnet-runtime",
+		"ms-edgedevtools.vscode-edge-devtools",
+		"dbaeumer.vscode-eslint",
+		"DavidAnson.vscode-markdownlint",
+		"ms-vscode.notepadplusplus-keybindings",
+		"ms-edgedevtools.vscode-edge-devtools",
+		"ms-dotnettools.vscode-dotnet-runtime",
+		"golang.go"
+	]
+}

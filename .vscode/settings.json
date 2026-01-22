@@ -1,0 +1,8 @@
+{
+    "liveServer.settings.CustomBrowser": "chrome",
+    "liveServer.settings.port": 5501,
+    "chat.sendElementsToChat.enabled": false,
+    "chat.sendElementsToChat.attachImages": false,
+    "chat.sendElementsToChat.attachCSS": false,
+    "livePreview.defaultPreviewPath": "/index.html"
+}

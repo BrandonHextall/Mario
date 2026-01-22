@@ -1,0 +1,2714 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Enemy Physics</title>
+    <style>canvas {border:1px solid;position:fixed;left:10}</style>
+    <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.7.1/jquery.min.js"></script>
+</head>
+<body>
+    <!-- Make a 2048 game -->
+    <!-- Make Tetris game -->
+    <!--
+        Permanent comments (for guidance and descriptions of code) don't have whitespace after //, as well as starting with a capital letter
+        Temporary comments (telling me what I need to make) has a whitespace after //, as well as starting with no capital
+        commented code (whether temporarily for debugging purposes or failed code or otherwise) is the same as temporary. distinguishing between the two should be easy enough
+        
+        When making classes, have a list or something similar for the assets and colour schemes etc so that they dont have to be hardcoded
+        green enemies have the same colour palette underwater and in castle
+        fire assets come under red enemy class
+        When making classes for objects, create an attribute defining the location of the colour palette for that object
+        
+        When rendering tiles, will need to clear a rectangle of the tilemap, draw the background over it again,
+        then draw the asset
+        This is because in the original game, when tiles overlap parts of the initial asset get destroyed where
+        the new asset as been drawn and do not overlap.
+        I assume coins and items do not replace other sprites
+
+        When spawning enemies, give the enemy a spawning block (indicated on the level maps) and when that pillar of tiles is rendered, activate the enemy
+
+        game screen ratio is 4:3.
+        This might help with side scrolling stuff: https://gamedev.stackexchange.com/questions/19104/how-do-i-implement-side-scrolling-in-a-javascript-platformer
+
+        do everything without tilesize and scaling cuz when thats done, everything will scale easily
+
+        when picking up a coin, check if coins = 100. if yes reset to 0 and give extra life
+
+        when mario headbutts a tile, change the y-velocity to an immediate negative value or immediately invert the y-velocity
+
+        NEXT TASK:
+            Ensure enemies have basic physics (or necessary physics, if applicable) before moving forward
+
+            Make sprites be able to be drawn in reverse depending on direction facing:
+                have 2 version of each sprite saved in preRender function
+                when changing asset, check which side entity is facing
+                change sprite depending on direction
+
+            ENEMIES MOTHERFUCKA!
+            Make enemies move before doing anything else.
+                Collision and movement is most important
+                Ensure basic tile collision and movement is working for each entity
+                Figure out the other shit later
+
+            I have reason to believe that Goombas act the same way as a mushroom in terms of their physics and when hit from underneath a tile
+
+            Entity positioning task:
+                All entities are 1 pixel into tiles so EITHER :
+                    Give tiles a hitbox
+                        OR
+                    force entities 1 pixel into tiles
+                Make entities render after tiles so they appear on top
+                Find a way to draw mario when moving left (and spawn fireballs to the left) (probably check what direction mario is moving and if left, start from the end of the sprite instead of the left)
+
+            Fix mario skid-turning (too slow)
+
+            Create Star powerup
+            
+            make mario crouch:
+                x-acceleration = 0 while crouched
+                change hitbox and sprite
+                can still jump
+                if mario small, cannot crouch, no attributes affected by down button
+            
+            Change anything that has tile collision and make it all a single loop of tiles being checked so that every tile is only checked once for everything at the same time
+        
+        Stuff that needs testing when level designing:
+            accuracy of mario move speeds (time it takes to reach a certain point - test against Mesen emulation)
+            mario moves too fast when accelerating in air from low speed. give him a max speed in air if his speed is low
+
+        NOTE: some 3-key combinations do not work (eg. a s w, d s w) which could restrict certain actions (put a disclaimer up for that)
+    -->
+    <h2 id="debug"></h2>
+    <canvas id="canvas"></canvas>
+    <script type="module">
+        import {preRenderAsset} from "./preRender.mjs";
+        import {assets} from "./preRenderedAssets.mjs";
+        import {array} from "./tilemaps.mjs";
+        //for extending classes, the child class can use "super()" to inherit an attribute from the parent class
+        //calling the child class also uses the parent class attributes when called
+        //apparently functions are immediately inherited from parent class. good to know
+        //when drawing stuff, gonna need to draw it from the bottom left as mario can shrink and grow, and enemies can get bigger and smaller
+        /*
+            all things done using coordinates of entities will need to be done from the bottom left of the entityHitbox.
+            Essentially, all stuff that uses coordinates should be done opposite
+        */
+        let Game = {}, tileSize = 2;
+        //may also want to consider doing the individual side check for entities as it may work better
+        const   sprites = array,
+                getId = (what)  => {return document.getElementById(what)},
+                canvasElem = getId('canvas'),
+                canvas = canvasElem.getContext('2d'),
+                bufferElem = document.createElement('canvas'),
+                bufferCanvas = bufferElem.getContext('2d'),
+                debug = getId("debug");
+                canvasElem.focus();
+            let inptime = 0;
+
+        //for now, use only the original resolution of 256 x 240 then scale everything
+        Game.setResolution = () => {
+            let originalGameWidth = 256, originalGameHeight = 240,
+                screenWidth = window.innerWidth, screenHeight = window.innerHeight,
+                resolutionMultiplier;
+            resolutionMultiplier = (screenWidth < screenHeight ? screenWidth : screenHeight) / originalGameWidth;
+            //tileSize = resolutionMultiplier;
+            tileSize = 1;
+            //canvasElem.setAttribute("width", originalGameWidth * resolutionMultiplier);
+            //bufferElem.setAttribute("width", originalGameWidth * resolutionMultiplier);
+            //canvasElem.setAttribute("height", originalGameHeight * resolutionMultiplier);
+            //bufferElem.setAttribute("height", originalGameHeight * resolutionMultiplier);
+            //this will be the game size after physics are completed until the game in general is finished, which then I will make the sizing dynamic
+            canvasElem.setAttribute("width", 256);
+            canvasElem.setAttribute("height", 240);
+            //game size to attempt to sort physics
+            canvasElem.setAttribute("width", 450);
+            canvasElem.setAttribute("height", 400);
+            bufferElem.width = canvasElem.getAttribute("width");
+            bufferElem.height = canvasElem.getAttribute("height");
+        };
+        Game.worlds = [];
+        Game.currentLevel = 1;
+        Game.currentWorld = 1;
+        Game.lives = 3;
+        Game.score = 0;
+        Game.coins = 0;
+        Game.items = [];
+        Game.animationIntervals = [];
+        Game.coinAnimationDirection = 1;
+        Game.level;
+        Game.log = (what) => {console.log(what)}
+        Game.write = (what) => {document.write(what)}
+        Game.clearCanvas = () => {
+            canvas.clearRect(0, 0, canvasElem.getAttribute("width"), canvasElem.getAttribute("height"));
+            bufferCanvas.clearRect(0, 0, bufferElem.getAttribute("width"), bufferElem.getAttribute("height"));
+        }
+
+    // Game physics stuff
+        Game.fps = 60;
+        Game.block = 16;
+        Game.pixel = Game.block / 16;
+        Game.subpixel = Game.pixel / 16;
+        Game.subsubpixel = Game.subpixel / 16;
+        Game.subsubsubpixel = Game.subsubpixel / 16;
+        Game.getTotalValue = (b, p, sp, ssp, sssp) => {
+            const   hexValues = {0: 0, 1: 1, 2: 2, 3: 3, 4: 4, 5: 5, 6: 6, 7: 7, 8: 8, 9: 9, a: 10, A: 10, b: 11, B: 11, c: 12, C: 12, d: 13, D: 13, e: 14, E: 14, f: 15, F: 15},
+                    value = (what) => {return hexValues[what]}
+            return (value(b) * Game.block) + (value(p) * Game.pixel) + (value(sp) * Game.subpixel) + (value(ssp) * Game.subsubpixel) + (value(sssp) * Game.subsubsubpixel);
+        }
+
+        // Used to indicate which sides of a hitbox are valid for collisions (to hopefully stop the game from having a seizure when mario falls directly between 2 tiles)
+        // The index goes left, right, top, bottom
+        // the indexes indicate which side of the tile are valid colliders, not the side that the entity touches the tile with
+        // However, the indexes are used in the opposite way and are indexed for the opposite side of Mario's collision (don't ask, idfk either)
+        Game.collisionCombos = [
+            [true, true, true, true],       // left right top bottom    0
+            [true, true, true, false],      // left right top           1
+            [true, true, false, true],      // left right bottom        2
+            [true, true, false, false],     // left right               3
+            [true, false, true, true],      // left top bottom          4
+            [true, false, true, false],     // left top                 5
+            [true, false, false, true],     // left bottom              6
+            [true, false, false, false],    // left                     7
+            [false, true, true, true],      // right top bottom         8
+            [false, true, true, false],     // right top                9
+            [false, true, false, true],     // right bottom             10
+            [false, true, false, false],    // right                    11
+            [false, false, true, true],     // top bottom               12
+            [false, false, true, false],    // top                      13
+            [false, false, false, true],    // bottom                   14
+            [false, false, false, false]   // none                      15
+        ];
+        Game.pointValues = {
+            brick: 50,
+            coin: 200,
+            powerUp: 1000,
+            lakitu: 800,
+            hammerBro: 1000,
+            stompChain: [100, 200, 400, 500, 800, 1000, 2000, 4000, 5000, 8000, "1up"],
+            shellChain: [500, 800, 1000, 2000, 4000, 5000, 8000, "1up"],
+            shellKick: {
+                ground: 400,
+                afterStomp: [500, 800]//grants 500 or 800
+            },
+            fireball: {
+                base: 200,
+                goomba: 100,
+                hammerBro: 1000,
+                bowser: 5000
+            },
+            flagpole: [100, 400, 800, 2000, 5000], //this depends on pole height mario reaches
+            bonusSeconds: 50 //bonus points granted for every remaining second on the level timer
+        }
+        class Entity {
+            /*
+                5 different units of measurement: block, pixel, subpixel, subsubpixel, and subsubsubpixel.
+                Each value is 1/16 of the previous value (block=16, pixel=1, s-pixel = 1/16, etc)
+                Each value ranges from 0 to 15 (on documentation its 0-F where A-F is 10-15)
+                May be helpful to note that more often than not, blocks won't be used.
+
+                Subsub- and subsubsubpixels do NOT factor into Mario's X position and are only used for precise accelerations
+                A movement speed of 000xx will NOT move mario (furthermore, the xx position from the previous fram stays the same if he somehow comes to a stop)
+                The following applies to ALL physics, not just ground physics:
+                    If at any time, Mario's current X acceleration causes his X-Velocity to reach/exceed its current maximum, his ss- and ssspixel values drop to 0
+                    If his Y-Velocity is reached/exceeded, the ss-, ss-, and ssspixel values drop to 0
+
+                use an extra hitbox for entities that is 2 pixel larger than the actual hitbox
+                use this to detect if the entity is 1 pixel away from a tile and if so, they are technically touching it
+            */
+            constructor(x, y, hitboxX, hitboxY, hitboxW, hitboxH, sprite, direction = "l") {
+                this.x = x;
+                this.y = y;
+                this.hitboxOffsets = {x: hitboxX, y: hitboxY, w: hitboxW, h: hitboxH}
+                this.hitbox = {x: this.x + this.hitboxOffsets.x, y: this.y + this.hitboxOffsets.y, w: hitboxW, h: hitboxH}
+                this.collisions = {left: false, right: false, top: false, bottom: false}
+                this.sprite = sprite;
+                this.direction = "l";
+                this.collisionSide = false;
+                this.gravityHasChanged = false;
+                this.w = this.sprite.l.width;
+                this.h = this.sprite.l.height;
+                this.hasTileBelow = false;
+            }
+
+            // Draws entity
+            draw = () => Game.drawAsset(this);
+            
+            // Checks if colliding object is in contact with ent
+            checkIfTouching(collider) {
+                if (!collider) return false;
+                let entityHitbox = this, colliderProperty = collider.hitbox ? collider.hitbox : collider;
+                return !(
+                    entityHitbox.x > colliderProperty.x + colliderProperty.w ||
+                    entityHitbox.x + entityHitbox.w < colliderProperty.x ||
+                    entityHitbox.y > colliderProperty.y + colliderProperty.h ||
+                    entityHitbox.y + entityHitbox.h < colliderProperty.y
+                )
+            }
+
+            // Checks which side a collision occurs
+            checkCollisionSide(collider) {
+                if (collider) {
+                    let colliderProperty = collider.hitbox ? collider.hitbox : collider;
+                    if (collider instanceof Tile) if (collider.isBroken) return false
+                    if (this.checkIfTouching(collider)) {
+                        let entityHitbox = this,
+                        entityHitboxHalfW = entityHitbox.w / 2,
+                        entityHitboxHalfH = entityHitbox.h / 2,
+                        colliderHalfW = colliderProperty.w / 2,
+                        colliderHalfH = colliderProperty.h / 2,
+                        entityHitboxCenterX = entityHitbox.x + entityHitbox.w / 2,
+                        entityHitboxCenterY = entityHitbox.y + entityHitbox.h / 2,
+                        colliderCenterX = colliderProperty.x + colliderProperty.w / 2,
+                        colliderCenterY = colliderProperty.y + colliderProperty.h / 2,
+                        
+                        // Calculate the distance between centers
+                        diffX = entityHitboxCenterX - colliderCenterX,
+                        diffY = entityHitboxCenterY - colliderCenterY,
+                        
+                        // Calculate the minimum distance to separate along X and Y
+                        minXDist = entityHitboxHalfW + colliderHalfW,
+                        minYDist = entityHitboxHalfH + colliderHalfH,
+                        
+                        // Calculate the depth of collision for both the X and Y axis
+                        depthX = diffX > 0 ? minXDist - diffX : -minXDist - diffX,
+                        depthY = diffY > 0 ? minYDist - diffY : -minYDist - diffY;
+                        // Now that you have the depth, you can pick the smaller depth and move along that axis.
+
+                        /*
+                            This is where the collision problem lies.
+                            the collision between the player and the tile isnt deep enough on the top of the tile to trigger a y-axis collision
+                            instead, the game detects an x-axis collision and the player falls straight through the tiles
+                            check if tiles are only floors by checking if they have any collision on the top and none on left and right
+                            only allow the function to return a y-level collision
+
+                            chatgpt example:
+                                check collision between multiple tiles at once
+                                do this by finding a range of tiles that mario may be colliding with
+                                check collision between mario and a new tile hitbox by creating a square using the tile coorinates
+                        */
+                        if (depthX != 0 && depthY != 0) {
+                            if (Math.abs(depthX) < Math.abs(depthY)) {
+
+                                // Collision along X axis. React accordingly
+                                //                                             left                                             right
+                                //this.x = depthX > 0 ? colliderProperty.x + colliderProperty.w - this.hitboxOffsets.x : colliderProperty.x - entityHitbox.w - this.hitboxOffsets.x;
+                                return depthX > 0 ? "left" : "right";
+                            } else {
+                                // Collision along Y axis
+                                //                                              top                                             bottom
+                                //this.y = depthY > 0 ? colliderProperty.y + colliderProperty.h - this.hitboxOffsets.y : colliderProperty.y - entityHitbox.h - this.hitboxOffsets.y;
+                                return depthY > 0 ? "top" : "bottom";
+                            }
+                        } else return false;
+                    } else return false;
+                } else return false;
+            }
+
+            // Checks which side a collision occurs (new method only used in 1 section, may need to edit this)
+            checkCollisionSideNew(collider) {
+                if (collider) {
+                    let colliderProperty = collider.hitbox ? collider.hitbox : collider;
+                    if (this.checkIfTouching(collider)) {
+                        // Checks which side Mario is closest to, which determines the side he is colliding with
+                        let overlapLeft = (collider.x + collider.w) - this.x,
+                            overlapRight = (this.x + this.w) - collider.x,
+                            overlapTop = (collider.y + collider.h) - this.y,
+                            overlapBottom = (this.y + this.h) - collider.y,
+                            minOverlap = Math.min(overlapLeft, overlapRight, overlapTop, overlapBottom)
+                        if (minOverlap == overlapLeft) return "left";
+                        else if (minOverlap == overlapRight) return "right";
+                        else if (minOverlap == overlapTop) return "top";
+                        else if (minOverlap == overlapBottom) return "bottom";
+                        else return false;
+                    }
+                }
+            }
+
+            // Collision for large hitboxes. Stops entities from clipping and breaking their physics
+            largeLevelHitboxCollision() {
+                this.update();
+                let levelHitboxes = Game.level.largeHitboxes,
+                    isMario = this instanceof Mario;
+                //if (this instanceof Enemy) this.horizontalCollision = false;
+                for (let hitboxIndex = 0; hitboxIndex < levelHitboxes.length; hitboxIndex ++) {
+                    let levelHitbox = levelHitboxes[hitboxIndex];
+                    this.collisionSide = this.checkCollisionSide(levelHitbox);
+                    let entityHitbox = this;
+                    switch (this.collisionSide) {
+                        case "left": {
+                            this.collisions.left = true;
+                            this.setX(levelHitbox.x + levelHitbox.w);
+                            if (isMario) {
+                                this.velocityX = 0;
+                                this.accelerationX = 0;
+                            } else this.speed *= -1;
+                            break;
+                        }
+                        case "right": {
+                            this.collisions.right = true;
+                            this.setX(levelHitbox.x - this.w);
+                            if (isMario) {
+                                this.velocityX = 0;
+                                this.accelerationX = 0;
+                            } else this.speed *= -1;
+                            break;
+                        }
+                        case "top": {
+                            //this.collisions.top = true;
+                            this.setY(levelHitbox.y + levelHitbox.h);
+                            //this.velocityY = this instanceof Mario ? this.physics.jumpPhysics[this.speedType].fallingGravity : this.velocityY * - 0.5;
+                            this.velocityY *= (this instanceof Mario ? -0.5 : -1)
+                             -1;//0.5;
+                            this.jumping = true;
+                            break;
+                        }
+                        case "bottom": {
+                            this.collisions.bottom = true;
+                            this.setY(levelHitbox.y - this.h)
+                            if (this instanceof Parakoopa) {
+                                this.setParakoopaVelocity();
+                            } else {
+                                this.velocityY = 0;
+                                this.gravity = 0;
+                                this.jumping = false;
+                            }
+                            break;
+                        }
+                        case false: {
+                            //this.gravity = this.physics.jumpPhysics[this.speedType].fallingGravity;
+                            break;
+                        }
+                    }
+                    this.updateHitboxes();
+                    let hitboxIsBelow = false;
+                    // Check if hitbox is 1 pixel below mario and if no, mario is falling and add falling gravity
+                    if (!this.collisions.bottom && !hitboxIsBelow) {
+                        
+                        // Check if hitbox X value is close enough to mario
+                        if (Math.floor(this.x) < levelHitbox.x + levelHitbox.w && Math.floor(this.x + this.w) > levelHitbox.x) {
+                            
+                            // Check if hitbox is 1 pixel below mario
+                            if  (Math.floor(this.y) < levelHitbox.y && Math.floor(this.y + this.h) >= levelHitbox.y) {
+                                this.collisionSide = "bottom";
+                                if (this instanceof Parakoopa) {
+                                    this.setParakoopaVelocity();
+                                } else {
+                                    this.jumping = false;
+                                    this.velocityY = 0;
+                                    this.gravity = 0;
+                                    this.collisions.bottom = true;
+                                    hitboxIsBelow = true;
+                                    this.hasTileBelow = true;
+                                }
+                                break;
+                            } else {
+                                this.jumping = true;
+                                this.hasTileBelow = false;
+                                this.gravity = this instanceof Mario ? (this.physics.jumpPhysics[this.speedType][this.holdingJumpButton ? "holdingJumpGravity" : "fallingGravity"]) : this.originalGravity;
+                            }
+                        }
+                    }
+                }
+            }
+
+
+            // Updates entity position
+            update() {
+                this.resetCollision();
+                this.updateHitboxes();
+            }
+
+            // Manages basic movement and collision of entities
+            moveEnt() {
+                /*
+                    When checking tile collision, mario hits whichever tile he is MOST hitting
+                    eg. if he is jumping and hits 2 tiles, whichever tile that the majority of his body is under is the one he hits
+                    this must get fixed as he always hits the tile on his left and when he is very close to being fully under the right tile, he clips to being centrally under the right tile (when under a breakable and unbreakable tile)
+                    possible fix is to use largeHitbox collision first, then decrement his y-pos by 1 if he had a top collision, then check the tile, then revert his position
+                    when colliding with a tile:
+                        check if theres a tile on the right.
+                        If yes:
+                            check diff between mario and tile X pos.
+                            If the difference is more than half, break next tile
+                        if no:
+                            break current tile
+                */
+                this.gravityHasChanged = false; // this is specifically for Parakoops as they seem to not like using the right gravity
+                let levelTiles = Game.level.tiles,
+                    marioYposIncrement = 1;
+
+                if (this instanceof Mario) {
+                    // Ground movement
+                    this.groundMovement();
+
+                    // Air movement
+                    this.airMovement();
+                    
+                    // FlowerPower Fireball creation (Fireball will have its own Entity class)
+                    if (this.activeFlower && !this.keys.sprint) this.canShootFireball = true;
+                    if (this.activeFlower && this.canShootFireball && this.keys.sprint /*&& this.fireballs.length < 3*/) {
+                        let fireball = new Fireball(this.hitbox.x + this.hitbox.w, this.y + 11);
+                        this.fireballs.push(fireball);
+                        this.canShootFireball = false;
+                    }
+                }
+
+                this.updateCoords();
+                this.largeLevelHitboxCollision();
+
+                if (this instanceof Mario) this.addY(-marioYposIncrement);
+                
+                // Checking tile collision
+
+                // These variables determine which tiles around the entity are checked. For some reason it only works when it uses the tiles adjacent to it.
+                let startX = Math.floor(this.x / 16),
+                    startY = Math.floor(this.y / 16),
+                    endX = Math.floor((this.x + this.w) / 16),
+                    endY = Math.floor((this.y + this.h) / 16),
+                    x = startX, y = startY,
+                    tileBrokenThisFrame = false,
+                    isMario = this instanceof Mario;
+                for (y; y <= endY; y ++) {
+                    if (y >= levelTiles.length) continue;
+                    for (x; x <= endX; x ++) {
+                        if (x >= levelTiles[y].length) break;
+                        let tile = levelTiles[y][x];
+                        this.collisionSide = this.checkCollisionSide(tile);
+                        if (tile)
+                        switch (this.collisionSide) {
+                            case false || "false":
+                                if (this.collisions.bottom) {
+                                    this.gravity = 0;
+                                    this.velocityY = 0;
+                                } else this.jumping = true;
+                                break;
+                            case "left":
+                                if (tile.validCollisionSides[1] && !this.collisions.left) {
+                                    this.collisions.left = true;
+                                    this.setX(tile.x + tile.w);
+                                    if (isMario) {
+                                        this.velocityX = 0;
+                                        this.accelerationX = 0;
+                                    } else this.speed *= -1;
+                                }
+                                break;
+                            case "right":
+                                if (tile.validCollisionSides[0] && !this.collisions.right) {
+                                    this.collisions.right = true;
+                                    this.setX(tile.x - this.w);
+                                    if (isMario) {
+                                        this.velocityX = 0;
+                                        this.accelerationX = 0;
+                                    } else this.speed *= -1;
+                                }
+                                break;
+                            case "top":
+                                if (tile.validCollisionSides[3] && !this.collisions.top) {
+                                    this.collisions.top = true;
+                                    //this.setY(tile.y + tile.h - this.hitboxOffsets.y);
+                                    this.setY(tile.y + tile.h);
+                                    this.velocityY *= -1;//0.5;
+                                    if (isMario) {
+                                        this.execTileHit(tile)
+                                    }
+                                }
+                                break;
+                            case "bottom":
+                                if (tile.validCollisionSides[2] && this.velocityY > 0) {
+                                    this.collisions.bottom = true;
+                                    this.setY(tile.y - this.hitboxOffsets.y - this.hitbox.h);
+                                    this.speedAtStartOfJump = 0;
+                                    if (this instanceof Parakoopa) {
+                                        this.setParakoopaVelocity()
+                                        this.velocityY = this.gravity;
+                                    } else {
+                                        this.velocityY = 0;
+                                        this.gravity = 0;
+                                        this.jumping = false;
+                                    }
+                                }
+                                break;
+                        }
+                        this.updateHitboxes();
+                    }
+                }
+                if (this instanceof Mario) this.addY(marioYposIncrement);
+                if (!this instanceof Parakoopa) {
+                    if (!this.collisions.bottom) this.gravity = this.fallingGravity;
+                    else this.gravity = this.originalGravity;
+                }
+                //this.largeLevelHitboxCollision()
+
+                // Mario crouch stuff
+                if (this instanceof Mario) {
+                    if (this.size == 2 && this.keys.down) this.crouch();
+                    else if (this.crouching && !this.keys.down) this.standUp();
+                }
+
+                //try using Math.floor() when drawing tiles, as this may help with visual clarity and do the same with mario
+                /*
+                    try using some sort of pythagoras shit to determine if any tiles will coincide with the new position after moving
+                    will need original coords (x1 and y1) and coords after applying velocity (x2 and y2)
+                    will be something like: (x2 - x1) * (x2 - x1) and (y2 - y1) * (y2 - y1)
+
+                    just have a look at the map/grid/coordinate formulas to find the correct formula for translation
+
+                    new idea: add all variants of tiles wherein the necessary collision sides are given in the tileList, not when creating a new tile
+               */
+            }
+
+            // Updates hitboxes
+            updateHitboxes() {
+                this.hitbox.x = this.x + this.hitboxOffsets.x;
+                this.hitbox.y = this.y + this.hitboxOffsets.y;
+            }
+
+            // Resets collision side values
+            resetCollision() {
+                this.collisions.left = false;
+                this.collisions.right = false;
+                this.collisions.top = false;
+                this.collisions.bottom = false;
+            }
+            
+            // Updates coordinates
+            updateCoords() {
+                if (this instanceof Mario) {
+                    this.velocityX += this.accelerationX;
+                    this.x += this.velocityX;
+                } else {
+                    this.x += this.speed;
+                }
+                this.velocityY += this.gravity;
+                this.y += this.velocityY;
+            }
+            
+            // Allows instantaneous adding to X
+            addX(x) {
+                this.x += x;
+                this.hitbox.x = this.x + this.hitboxOffsets.x;
+            }
+
+            // Allows simple setting of X
+            setX(x) {
+                this.x = x;
+                this.hitbox.x = this.x + this.hitboxOffsets.x;
+            }
+            
+            // Allows instnataneous adding to Y
+            addY(y) {
+                this.y += y;
+                this.hitbox.y = this.y + this.hitboxOffsets.y;
+            }
+
+            // Allows simple setting of Y
+            setY(y) {
+                this.y = y;
+                this.hitbox.y = this.y + this.hitboxOffsets.y;
+            }
+
+            changeDirection() {
+                Game.log("v: " + this.direction + "\nd: " + this.direction)
+                if (this.velocityX) this.direction = this.velocityX > 0 ? "r" : "l"
+                else if (this.speed) this.direction = this.speed > 0 ? "r" : "l";
+            }
+
+            // Draws hitboxes. Used for debugging
+            drawHitbox(colour) {
+                /*canvas.beginPath();
+                canvas.fillStyle = colour;
+                canvas.fillRect(this.hitbox.x, this.hitbox.y, this.hitbox.w, this.hitbox.h);*/
+                bufferCanvas.beginPath();
+                bufferCanvas.fillStyle = colour;
+                bufferCanvas.fillRect(this.hitbox.x, this.hitbox.y, this.hitbox.w, this.hitbox.h);
+            }
+        }
+        
+        class Mario extends Entity {
+            constructor(x, y) {
+                /*
+                    hitbox x y w h at different stages:
+                        small: 4, 4, 8, 11
+                        crouching: 4, 9, 11, 11
+                        big: 4, 8/9, 11, 20/21
+                */
+                super(x, y, 4, 4, 8, 12, assets.overworld.mario.normal.small.stand, "l");
+                this.w = 14;
+                this.keys = {
+                    left: false,
+                    right: false,
+                    up: false,
+                    down: false,
+                    sprint: false, // Sprint is the same as the powerup button
+                }
+                this.collisions = {
+                    left: false,
+                    right: false,
+                    top: false,
+                    bottom: false
+                }
+                this.maxFallSpeed = Game.getTotalValue(0, 4, 0, 0, 0); // 4 pixels per second
+                this.holdingJumpButton = false;
+                this.movementFromCrouch = {
+                    left: false,
+                    right: false,
+                    lastMovement: ""
+                }
+                this.jumping = true;
+                this.crouching = false;
+                this.skidding = false;
+                this.accelerationX = 0;
+                this.velocityX = 0;
+                this.velocityY = 0;
+                this.gravity = 0;
+                this.lastMovementX = "";
+                this.lastMovementY = "";
+                this.directionAtStartOfJump = false;
+                this.speedAtStartOfJump = 0;
+                this.speedType = "lower";
+                this.size = 1;
+                this.lives = 3;
+                this.activeFlower = false;
+                this.canShootFireball = false; //mario has ability to shoot up to 3 fireballs at a time, and can shoot another when one has hit an object. Can also shoot fireballs quickly when certain button is presses (will need to implement this somehow)
+                this.activeStar = false;
+                this.starDuration = 0; //find out star duration
+                this.fireballs = [];
+                // When star is active, create timeout function that lasts the duration and the changes activeStar to false
+
+            // Physics stuff
+                this.physics = {
+                // Ground physics
+                    groundPhysics: {
+                        walk: {
+                            minVelocity: Game.getTotalValue(0, 0, 1, 3, 0),
+                            maxSpeed: Game.getTotalValue(0, 1, 9, 0, 0),
+                            acceleration: Game.getTotalValue(0, 0, 0, 9, 8),
+                            maxSpeedUnderwater: Game.getTotalValue(0, 1, 1, 0, 0),
+                            maxSpeedLevelEntry: Game.getTotalValue(0, 0, "D", 0, 0)
+                        },
+                        run: {
+                            acceleration: Game.getTotalValue(0, 0, 0, "E", 4),
+                            maxSpeed:  Game.getTotalValue(0, 2, 9, 0, 0)
+                        },
+                        // When sprint button released and current direction is held, Mario keeps current speed for 10 frames then instantly slow to walk speed which is why speed isn't lost when throwing fireballs while running
+                        releaseDeceleration: Game.getTotalValue(0, 0, 0, "D", 0),
+                        // If player stops holding opposite direction and presses no other button, will continue to decelrate
+                        skidDeceleration: Game.getTotalValue(0, 0, 1, "A", 0),
+                        // The speed below/ at which Mario/Luigi changes direciton while skidding (ie he doesn't come to a complete stop first)
+                        // This is the value that mario can be at or below in order to turn around and move in the opposite direction without stopping or skidding
+                        // So if mario was at or below this speed and the player presses the opposite button, mario will immediately turn around and walk in the opposite direction without his speed going down so his speed will be immediately reversed
+                        skidTurnaroundSpeed: Game.getTotalValue(0, 0, 9, 0, 0)
+                    },
+                // Air physics
+                    /*
+                        IMPORTANT!!
+                        These are things that ALWAYS hold true:
+                            Releasing the direction you go in will keep speed static, it will NOT slow you down
+                            Holding/releasing jump/sprint button has NO EFFECT on midair momentum (meaning regardless of if you press or release the jump button, the speed will not be affected)
+                            Midair physics underwater works EXACTLY how they do in air, same accelerations and everything else
+                    */
+                    // Values of midair momentum changes
+                    airPhysics: {
+                        // Holding forward in midair (to gain momentum)
+                        gainMomentum: {
+                            // If current speed is less than Game.getTotalValue(0, 1, 9, 0, 0)
+                        lower: Game.getTotalValue(0, 0, 0, 9, 8),
+                            // If current speed is more than/ equal to Game.getTotalValue(0, 0, 0, "E", 4")
+                        higher: Game.getTotalValue(0, 0, 0, "E", 4)
+                        },
+                        // Holding back in midair (to lose momentum)
+                        loseMomentum: {
+                                // If speed is more than/ equal to Game.getTotalValue(0, 1, 9, 0, 0)
+                            higher: Game.getTotalValue(0, 0, 0, "E", 4),
+                                // If speed is lower than Game.getTotalValue(0, 1, 9, 0, 0) and speed at start of jump is more than/ equal to Game.getTotalValue(0, 1, "D", 0, 0)
+                            lower: {
+                                highJumpStart: Game.getTotalValue(0, 0, 0, "D", 0),
+                                // If speed is lower than Game.getTotalValue(0, 1, 9, 0, 0) and speed at start of jump is less than Game.getTotalValue(0, 1, "D", 0, 0)
+                                lowJumpStart: Game.getTotalValue(0, 0, 0, 9, 8)
+                            }
+                        }
+                    },
+                // Jumping/ vertical physics
+                    /*
+                        As long as jump button is held, Mario will rise at a slowing rate.
+                        As soon as jump button is released, Mario immediately starts falling
+                        Vertical downward velocity caps at Game.getTotalValue(0, 4, 8, 0, 0), and wraps back to Game.getTotalValue(0, 4, 0, 0, 0) when max velocity is exceeded
+
+                        Running of a ledge doesn't use any specific gravity but instead uses whatever the previous falling gravity was
+                    */
+                    jumpPhysics: {
+                        // Initial horizontal speed less than Game.getTotalValue(0, 1, 0, 0, 0)
+                        lower: {
+                            // Initial velocity (-y)
+                            initalVelocity: Game.getTotalValue(0, 4, 0, 0, 0),
+                            // Holding jump button gravity (+y)
+                            holdingJumpGravity: Game.getTotalValue(0, 0, 2, 0, 0),
+                            // Falling gravity (+y)
+                            fallingGravity: Game.getTotalValue(0, 0, 7, 0, 0),
+                        },
+                        // Initial horizontal speed between Game.getTotalValue(0, 1, 0, 0, 0) and Game.getTotalValue(0, 2, 4, "F", "F")
+                        between: {
+                            // Initial velocity (-y)
+                            initalVelocity: Game.getTotalValue(0, 4, 0, 0, 0),
+                            // Holding jump button gravity (+y)
+                            holdingJumpGravity: Game.getTotalValue(0, 0, 1, "E", 0),
+                            // Falling gravity (+y)
+                            fallingGravity: Game.getTotalValue(0, 0, 7, 0, 0),
+                        },
+                        // Initial horizontal speed more than/equal to Game.getTotalValue(0, 2, 5, 0, 0)
+                        greater: {
+                            // Initial velocity (-y)
+                            initalVelocity: Game.getTotalValue(0, 5, 0, 0, 0),
+                            // Holding jump button gravity (+y)
+                            holdingJumpGravity: Game.getTotalValue(0, 0, 2, 8, 0),
+                            // Falling gravity (+y)
+                            fallingGravity: Game.getTotalValue(0, 0, 9, 0, 0),
+                        },
+                        // Initial horizontal speed is level entry speed
+                        entry: {
+                            // Initial velocity (-y)
+                            initalVelocity: Game.getTotalValue(0, 0, 0, 0, 0),
+                            // Holding jump button gravity (+y)
+                            holdingJumpGravity: Game.getTotalValue(0, 0, 2, 8, 0),
+                            // Falling gravity (+y)
+                            fallingGravity: Game.getTotalValue(0, 0, 2, 8, 0)
+                        },
+                    },
+                // Swimming Physics
+                    /*
+                        Underwater and ground levels have similar physics.
+                        Swimming is treated almost identical to jumping, but with lower gravity.
+                        Just like jumping, gravity values only reset on pressing jump button, meaning that if you swim out of a whirlpool, you will keep the lower gravity values.
+                        Whirlpools extend exactly 1 block from the edges of a pit. Unlike other gravity changes, the "surface" gravity while in or above darkened segment (shown on documentation image).
+                        While in whirlpools, mario Y-speed caps at Game.getTotalValue(0, 1, 8, 0, 0) rather than Game.getTotalValue(0, 4, 8, 0, 0), and an additional Game.getTotalValue(0, 0, 1, 0, 0) is added to his current gravity.
+                        If Mario has a current positive Y-Velocity of V (i think this means the initial velocity variable), then his Y-position doesn't change by V every frame (as it would in any other case), but by the value of (2V + gravity).
+                        While in the whirlpool region, Mario is moved 1 pixel towards the center of the pit every other frame
+                    */
+                    swimPhysics: {
+                        // Initial horizontal speed is normal
+                        normal: {
+                            // Initial velocity (-y)
+                            initial: Game.getTotalValue(0, 1, 8, 0, 0),
+                            // Holding jump button gravity (+y)
+                            holdingJumpGravity: Game.getTotalValue(0, 0, 0, "D", 0),
+                            // Falling gravity (+y)
+                            fallingGravity: Game.getTotalValue(0, 0, 0, "A", 0)
+                        },
+                        // Initial horizontal speed is in whirlpool zone
+                        whirlpool: {
+                            // Initial velocity (-y)
+                            initial: Game.getTotalValue(0, 1, 0, 0, 0),
+                            // Holding jump button gravity (+y)
+                            holdingJumpGravity: Game.getTotalValue(0, 0, 0, 4, 0),
+                            // Falling gravity (+y)
+                            fallingGravity: Game.getTotalValue(0, 0, 0, 9, 0)
+                        },
+                        // Initial horizontal speed is in surface zone
+                        surface: {
+                            // Initial velocity (-y)
+                            initial: Game.getTotalValue(0, 1, 8, 0, 0),
+                            // Holding jump button gravity (+y)
+                            holdingJumpGravity: Game.getTotalValue(0, 0, 1, 8, 0),
+                            // Falling gravity (+y)
+                            fallingGravity: Game.getTotalValue(0, 0, 1, 8, 0)
+                        }
+                    },
+                // Other Physics
+                    /*
+                        Other physics that don't fit into other categories.
+                        xxx means that the s-, ss-, and ssspixel values are kept from the previous frame
+                    */
+                    otherPhysics: {
+                        // Climbing stuff
+                        climb: {
+                            velocity: {
+                                // Ascending (-y)
+                                ascend: Game.getTotalValue(0, 0, "E", 0, 0),
+                                // Descending (+y)
+                                descend: Game.getTotalValue(2, 0, 0, 0, 0)
+                            },
+                            gravity: Game.getTotalValue(0, 0, 0, 0, 0)
+                        },
+                        // When stomping on enemies like squashing a Goomba
+                        stomp: {
+                            goombaAndShell: {
+                                velocity: Game.getTotalValue(),
+                                gravity: Game.getTotalValue()
+                            },
+                            lakituBroCheepBullet: {
+                                velocity: Game.getTotalValue(0, 3, "x", "x", "x"),
+                                gravity: "last" // The fact that stomps don't have a fixed gravity means that if you stomp and enemy while moving upwards and are still holding jump button, you can continue to hold it to reduce gravity which results in a huge height boost
+                            },
+                            trampoline: {
+                                normal: {
+                                    velocity: Game.getTotalValue(0, 7, 0, 0, 0),
+                                    gravity: "last" // This means that a trampoline jump at walk speed will propel you much higher than a running jump
+                                },
+                                holdingJumpGravity: {
+                                    velocity: Game.getTotalValue(0, "c", 0, 0, 0),
+                                    gravity: "last"
+                                },
+                                superTrampoline: {// Only with holding jump button
+                                    velocity: Game.getTotalValue(2, 0, 0, 0, 0),
+                                    gravity: Game.getTotalValue(0, 0, 7, 0, 0)
+                                }
+                            }
+                        },
+                        /*
+                            The game changes the picel unit two frames before hitting a block/ceiling, and calculates the difference between the replaced and replacement values, and subtracts this number from Marios Y-Position 2 frames later.
+                            For example. you are 3 frames away from a hit block with a velocity of -02000 and a gravity of 00700.
+                            Your speed next fram will be 01700 but you will move a distance of -01900. Then the speed next frame would be 01E00 and you will move a distance of -01200.
+                            next frame, your speed and change distance will both be 02500.
+                        */
+                        ceilingHit: {
+                            // Hitting untouched ? blocks or hitting bricks while small
+                            soft: {
+                                velocity: Game.getTotalValue(0, 0, "x", "x", "x"),
+                                gravity: "last"
+                            },
+                            // Hitting anything else (static/unbreakable blocks)
+                            hard: {
+                                velocity: Game.getTotalValue(0, 1, "x", "x", "x"),
+                                gravity: "last"
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Changes player values based on keypresses and player speed
+            // Handles ground movements
+            groundMovement() {
+                /*Game.level.tiles.foreach(row => roe.foreach(tile => {
+                    if (tile instanceof Tile) {
+                        if (tile.contents > 0) {
+                            let side = this.checkCollisionSide(tile)
+                        }
+                    }
+                }))*/
+                this.largeLevelHitboxCollision();
+                // Determines which values to use based on if mario is walking or running
+                let playerMovementTypeX = this.keys.sprint ? "run" : "walk",
+                    levelTiles = Game.level.tiles;
+
+                // Foreach (checks every single tile)
+                levelTiles.forEach(row => row.forEach(tile => {
+                    this.addY(1);
+                    let side = this.checkCollisionSide(tile);
+                    this.addY(-1);
+                    if (side == "bottom") {
+                        this.hasTileBelow = true;
+                        this.jumping = false;
+                    }
+                }))
+
+                if (!this.jumping && this.hasTileBelow)
+                
+                // walking acceleration logic
+                    // Logic when player walks left
+                    if (this.keys.left) {
+                        // When player reaches max walk speed
+                        if (this.velocityX <= -this.physics.groundPhysics[playerMovementTypeX].maxSpeed) {
+                            this.velocityX = -this.physics.groundPhysics[playerMovementTypeX].maxSpeed;
+
+                            //here is where the 10 frames of maintaining speed is (i think, not actually 100% sure)
+
+                            this.accelerationX = 0;
+                        }
+
+                        // When player begins walking left
+                        else if (this.velocityX == 0) this.accelerationX = -this.physics.groundPhysics.walk.minVelocity;
+
+                        // Logic for quick turn-around
+                        else if (!this.jumping && this.velocityX < this.physics.groundPhysics.skidTurnaroundSpeed && this.velocityX > 0) this.velocityX = -this.physics.groundPhysics.walk.minVelocity;
+
+                        // Logic when nothing special happening so player accelerates regularly
+                        else this.accelerationX = -this.physics.groundPhysics[playerMovementTypeX].acceleration;
+
+                    // Logic when player moves right
+                    } else if (this.keys.right) {
+
+                        // When player reaches max move speed
+                        if (this.velocityX >= this.physics.groundPhysics[playerMovementTypeX].maxSpeed) {
+                            this.velocityX = this.physics.groundPhysics[playerMovementTypeX].maxSpeed;
+
+                            //here is where the 10 frames of maintaining speed is (i think, not actually 100% sure)
+                            
+                            this.accelerationX = 0;
+                        }
+                            
+                        // When player begins moving right
+                        else if (this.velocityX == 0) this.accelerationX = this.physics.groundPhysics.walk.minVelocity;
+
+                        // Logic for quick turn-around
+                        else if (!this.jumping && this.velocityX > -this.physics.groundPhysics.skidTurnaroundSpeed && this.velocityX < 0) this.velocityX = this.physics.groundPhysics.walk.minVelocity;
+
+                        // Logic when nothing special happening so player accelerates regularly
+                        else this.accelerationX = this.physics.groundPhysics[playerMovementTypeX].acceleration;
+
+                // Walking deceleration Logic
+                    } else if (this.lastMovementX) {
+
+                        // Logic when last button pressed is left
+                        if (this.lastMovementX == "left") {
+
+                            // When player releases movement button and coasts to a stop
+                            if (this.velocityX < 0) this.accelerationX = this.physics.groundPhysics.releaseDeceleration;
+                            
+                            // When player presses opposite movement button to skid
+                            else if (this.velocityX > 0 && !this.jumping) this.skidding = true;
+                            
+                            // When player releases opposite movement button and decelerates to stop from skidding
+                            else {
+                                this.lastMovementX = "";
+                                this.velocityX = 0;
+                                this.accelerationX = 0;
+                            }
+                        }
+
+                        // Logic when last button pressed is right
+                        else if (this.lastMovementX == "right") {
+
+                            // When player releases movement button and coasts to a stop
+                            if (this.velocityX > 0) this.accelerationX = -this.physics.groundPhysics.releaseDeceleration;
+
+                            // When player presses opposite movement button to skid
+                            else if (this.velocityX < 0 && !this.jumping) this.skidding = true;
+                            
+                            // when player releases opposite movement button and decelerates to stop from skkidding
+                            else {
+                                this.lastMovementX = "";
+                                this.velocityX = 0;
+                                this.accelerationX = 0;
+                            }
+                        }
+                    } else {
+                        this.accelerationX = 0;
+                        this.velocityX = 0;
+                    }
+            
+            // Skidding physics
+                if (this.skidding && !this.jumping) {
+
+                    // Left skid
+                    if (this.lastMovementX == "left") {
+
+                        // Player is skidding. Pressing/releasing movement button has no effect and will decelerate at same rate to 0
+                        if (this.velocityX > 0) {
+                            this.accelerationX = -this.physics.groundPhysics.skidDeceleration;
+                            this.velocityX += this.accelerationX;
+                        }
+
+                        // Player velocity has reached opposite velocity so velocity and acceleration go to 0 to stop movement in opposite direction
+                        else {
+                            this.velocityX = 0;
+                            this.accelerationX = 0;
+                            this.skidding = false;
+                        }
+
+                    // Right skid
+                    } else if (this.lastMovementX == "right") {
+
+                        // Player is skidding. Pressing/releasing movement button has no effect and will decelerate at same rate to 0
+                        if (this.velocityX < 0) {
+                            this.accelerationX = this.physics.groundPhysics.skidDeceleration;
+                            this.velocityX += this.accelerationX;
+                        }
+
+                        // Player velocity has reached opposite velocity so velocity and acceleration go to 0 to stop movement in opposite direction
+                        else {
+                            this.velocityX = 0;
+                            this.accelerationX = 0;
+                            this.skidding = false;
+                        }
+                    }
+                }
+            }
+            
+            // Handles air movement
+            airMovement() {
+                let velocityParamY = (this.holdingJumpButton ? "holdingJump" : "falling") + "Gravity";
+                if (this.keys.up) {
+                    if (!this.jumping && !this.holdingJumpButton) {
+                        this.directionAtStartOfJump = this.lastMovementX;
+                        this.speedAtStartOfJump = this.velocityX;
+                        this.holdingJumpButton = true;
+                        this.jumping = true;
+
+                        // This determines what kind of variables mario uses depending on how fast he is moving
+
+                        // // If X velocity is positive
+                        if (this.speedAtStartOfJump > 0) {
+
+                            // Lower
+                            if (this.speedAtStartOfJump < Game.getTotalValue(0, 1, 0, 0, 0)) this.speedType = "lower";
+
+                            // Between
+                            else if (this.speedAtStartOfJump >= Game.getTotalValue(0, 1, 0, 0, 0) && this.speedAtStartOfJump <= Game.getTotalValue(0, 2, 4, "F", "F")) this.speedType = "between";
+
+                            // Higher
+                            else if (this.speedAtStartOfJump >= Game.getTotalValue(0, 2, 5, 0, 0)) this.speedType = "greater";
+
+                        // If X velocity is negative
+                        } else if (this.speedAtStartOfJump < 0) {
+
+                            // Lower
+                            if (this.speedAtStartOfJump > -Game.getTotalValue(0, 1, 0, 0, 0)) this.speedType = "lower";
+                        
+                            // Between
+                            else if (this.speedAtStartOfJump <= -Game.getTotalValue(0, 1, 0, 0, 0) && this.speedAtStartOfJump >= -Game.getTotalValue(0, 2, 4, "F", "F")) this.speedType = "between";
+
+                            // Higher
+                            else if (this.speedAtStartOfJump <= Game.getTotalValue(0, 2, 5, 0, 0)) this.speedType = "greater";
+                            
+                        // If X velocity is 0
+                        } else if (this.speedAtStartOfJump == 0) {
+                            this.speedType = "lower";
+
+                        // Level entry velocity stuff
+                        } else {
+
+                        }
+                        this.velocityY = -this.physics.jumpPhysics[this.speedType].initalVelocity;
+                    } else this.gravity = this.physics.jumpPhysics[this.speedType][velocityParamY];
+                }
+                /*
+                NOTE:   releasing direction of movement while midair will keep speed the same and will not slow down
+                holding/releasing jump has NO effect on midair momentum, so will stay the same / continue changin regardless of the jump button
+                */
+                if (mario.jumping) {
+                    /*
+                        mario moving left/right at start of jump:
+                            if current direction key = start jump direction:
+                                use air acceleration
+                            if current direction key = opposite direction:
+                                use air deceleration
+                            if no current direction key:
+                                maintain velocity (do not accelerate/decelerate)
+                    */
+                // Both/no key pressed. Momentum remains constant
+                    if (!this.keys.left && !this.keys.right) this.accelerationX = 0;
+                        
+                // Moving left at start of jump
+                    else {
+                        if (this.directionAtStartOfJump == "left") {
+
+                            // If direction button is the same as direction at the start of the jump (or if no direction is currently held)
+                            if (this.lastMovementX == this.directionAtStartOfJump) this.accelerationX = -this.physics.airPhysics.gainMomentum[this.velocityX < -Game.getTotalValue(0, 1, 9, 0, 0) ? "higher" : "lower"];
+                            
+                            // If direction button is opposite to direction at the start of the jump
+                            else {
+                                
+                                // If X velocity when moving left is greater than getTotalValue(0, 1, 9, 0, 0)
+                                if (this.velocityX <= -Game.getTotalValue(0, 1, 9, 0, 0)) this.accelerationX = this.physics.airPhysics.loseMomentum.higher;
+
+                                // If X velocity when moving left is less than getTotalValue(0, 1, 9, 0, 0) and speed at start of jump is less than getTotalValue(0, 1, "D", 0, 0)
+                                else if (this.velocityX >= -Game.getTotalValue(0, 1, 9, 0, 0) && this.speedAtStartOfJump <= -Game.getTotalValue(0, 1, "D", 0, 0)) this.accelerationX = this.physics.airPhysics.loseMomentum.lower.highJumpStart;
+
+                                // If X velocity when moving left is less than getTotalValue(0, 1, 9, 0, 0) and speed at start of jump is greater than getTotalValue(0, 1, "D", 0, 0)
+                                else if (this.velocityX >= -Game.getTotalValue(0, 1, 9, 0, 0) && this.speedAtStartOfJump > -Game.getTotalValue(0, 1, "D", 0, 0)) this.accelerationX = this.physics.airPhysics.loseMomentum.lower.lowJumpStart;
+                            }
+
+                    // Moving right at start of jump
+                        } else if (this.directionAtStartOfJump == "right") {
+
+                            // If direction button is the same as direction at the start of the jump (or if no direction is currently held)
+                            if (this.lastMovementX == this.directionAtStartOfJump) this.accelerationX = this.physics.airPhysics.gainMomentum[this.velocityX >= Game.getTotalValue(0, 1, 9, 0, 0) ? "higher" : "lower"];
+                            
+                            // If direction button is opposite to direction at the start of the jump
+                            else {
+
+                                // If X velocity when moving right is greater than getTotalValue(0, 1, 9, 0, 0)
+                                if (this.velocityX >= Game.getTotalValue(0, 1, 9, 0, 0)) this.accelerationX = -this.physics.airPhysics.loseMomentum.higher;
+
+                                // If X velocity when moving right is less than getTotalvalue(0, 1, 9, 0, 0) and speed at start of jump is less than getTotalValue(0, 1, "D", 0, 0)
+                                else if (this.velocityX <= Game.getTotalValue(0, 1, 9, 0, 0) && this.speedAtStartOfJump >= Game.getTotalValue(0, 1, "D", 0, 0)) this.accelerationX = -this.physics.airPhysics.loseMomentum.lower.highJumpStart;
+
+                                // If X velociry when moving left is less than getTotalValue(0, 1, 9, 0, 0) and speed at start of jump is less than getTotalValue(0, 1, "D", 0, 0)
+                                else if (this.velocityX <= Game.getTotalValue(0, 1, 9, 0, 0) && this.speedAtStartOfJump < Game.getTotalValue(0, 1, "D", 0, 0)) this.accelerationX = -this.physics.airPhysics.loseMomentum.lower.lowJumpStart;
+                            }
+
+                    // If mario starts jump standing still
+                        } else {
+                            if (this.keys.left && !this.keys.right) {
+                                this.accelerationX = -this.physics.airPhysics.gainMomentum[this.velocityX < -Game.getTotalValue(0, 1, 9, 0, 0) ? "higher" : "lower"];
+                                this.lastMovementX = "left";
+                            } else if (this.keys.right && !this.keys.left) {
+                                this.accelerationX = this.physics.airPhysics.gainMomentum[this.velocityX > Game.getTotalValue(0, 1, 9, 0, 0) ? "higher" : "lower"];
+                                this.lastMovementX = "right";
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Handles water movement
+            //will cross this shitty bridge when i come to it
+            waterMovement() {
+
+            }
+
+            // Gives mario powerups
+            givePowerup(powerup) {
+                if (typeof powerup === "number") {
+                    switch (powerup) {
+                        case 0: // Mario is hit
+                            /*
+                                Process:
+                                    check position of collision
+                                    if top, jump on and hit enemy
+                                    else:
+                                        check mario's size
+                                        if small,
+                            */
+                            this.sprite = assets[Game.level.location].mario.normal.small.stand[this.direction];
+                            this.y += 16;
+                            this.h = 16;
+                            this.hitbox.y += 16;
+                            this.w = 16;
+
+                        case 1: // Mushroom
+                            if (this.size != 1) return;
+                            // Mario's sprite needs to be changed to standing for the grow animation
+                            this.sprite = assets[Game.level.location].mario.normal.small.stand[this.direction];
+                            /*
+                                this is where the small-to-big animation will play.
+                                when mario picks up mushroom, animation plays, making him bigger
+                                when animation finished, y-coord needds to be increased by 16 (i think, may be subject to change)
+                            */
+
+                            // Grow animation
+                            //animation here
+
+                            // Final sprite for animation
+
+                            // Give new sprite depending on whether mario standing or jumping as well as direction
+                            this.sprite = assets[Game.level.location].mario.normal.big.stand[this.direction];
+
+                            // Y-axis modification
+                            this.y -= 16;
+                            this.h = 32;
+                            this.hitbox.y -= 16;
+
+                            this.w = 16;
+
+                            // Readjusting hitboxes
+                            this.hitboxOffsets = {x: 2, y: 5, w: 12, h: 27}
+                            this.hitbox = {x: this.x + this.hitboxOffsets.x, y: this.y + this.hitboxOffsets.y, w: this.hitboxOffsets.w, h: this.hitboxOffsets.h}
+                            this.size = 2;
+                            return;
+                        case 2: // Flower
+                            this.activeFlower = true;
+                            this.canShootFireball = true;
+
+                            // Final sprite for animation
+                            this.sprite = assets.overworld.mario.normal.big.stand[this.direction];
+
+                            // Y-axis modification
+                            if (this.size == 1) {
+                                this.y -= 16;
+                                this.h = 32;
+                                this.hitbox.y -= 16;
+                            }
+
+                            // Readjusting hitboxes
+                            this.hitboxOffsets = {x: 2, y: 5, w: 12, h: 27}
+                            this.hitbox = {x: this.x + this.hitboxOffsets.x, y: this.y + this.hitboxOffsets.y, w: this.hitboxOffsets.w, h: this.hitboxOffsets.h}
+                            this.size = 2;
+                            return;
+                        case 3: // Star
+                            this.activeStar = true;
+                            setTimeout(this.activeStar = false, this.starDuration);
+                            return;
+                        case 4: // 1-Up
+                            return;
+                    }
+                }
+            }
+
+            // Updates player values
+            updatePhysics() {
+                //this.largeLevelHitboxCollision();
+                //this.largeLevelHitboxCollision();
+                //this.update();
+
+                //mario max fall speed if 04800 and wraps back to 04000 when exceeded
+                if (this.velocityY >= Game.getTotalValue(0, 4, 8, 0, 0)) this.velocityY = Game.getTotalValue(0, 4, 0, 0, 0);
+
+            // Checks for reaching/exceeding maximum walk/run velocity
+                // Run velocity
+                if (this.keys.sprint) {
+
+                    // If mario moving right
+                    if (this.velocityX >= this.physics.groundPhysics.run.maxSpeed) {
+                        this.accelerationX = 0;
+                        this.velocityX = this.physics.groundPhysics.run.maxSpeed;
+                        
+                    // If mario moving left
+                    } else if (this.velocityX <= -this.physics.groundPhysics.run.maxSpeed) {
+                        this.accelerationX = 0;
+                        this.velocityX = -this.physics.groundPhysics.run.maxSpeed;
+                    }
+                // Walk velocity
+                } else {
+
+                    // If mario moving right
+                    if (this.velocityX >= this.physics.groundPhysics.walk.maxSpeed) {
+                        this.accelerationX = 0;
+                        this.velocityX = this.physics.groundPhysics.walk.maxSpeed;
+
+                    // If mario moving left
+                    } else if (this.velocityX <= -this.physics.groundPhysics.walk.maxSpeed) {
+                        this.accelerationX = 0;
+                        this.velocityX = -this.physics.groundPhysics.walk.maxSpeed;
+                    }
+                }
+            }
+            
+            // Enables crouching
+            crouch() {
+                if (this.size != 2 || this.jumping) return false;
+                if (!this.crouching) {
+                    this.y += 8;
+                    this.h -= 8;
+                    this.newPosY = this.y;
+                }
+                //mario cannot crouch in midair
+                this.accelerationX = 0;
+
+                // applies last movement value from left and right to allow movement directly after crouching
+                if (this.lastMovementX) this.movementFromCrouch.lastmovement = this.lastMovementX;
+                this.keys.left = false;
+                this.keys.right = false;
+                this.sprite = assets.overworld.mario.normal.big.crouch;
+                this.hitboxOffsets = {x: 3, y: 12, w: 10, h: 12}
+                this.hitbox = {x: this.x + this.hitboxOffsets.x, y: this.y + this.hitboxOffsets.y, w: this.hitboxOffsets.w, h: this.hitboxOffsets.h}
+                this.crouching = true;
+            }
+
+            // Stand up from crouch 
+            standUp() {
+                if (this.size != 2) return false;
+                // Reapplies original movement values to make player move again after crouching
+                this.keys.left = this.movementFromCrouch.left;
+                this.keys.right = this.movementFromCrouch.right;
+                this.lastMovementX = this.movementFromCrouch.lastMovement;
+                if (!(this.keys.left && this.keys.right)) this.lastMovementX = this.keys.left ? "left" : "right";
+                
+                // Returns placeholder values to false for next crouch (probably unneccesary, will keep commented until needed)
+                //this.movementFromCrouch = {left: false, right: false}
+
+                this.crouching = false;
+                this.sprite = assets.overworld.mario.normal.big.stand;
+                this.hitboxOffsets = {x: 2, y: 8, w: 12, h: 24}
+                this.hitbox = {x: this.x + this.hitboxOffsets.x, y: this.y + this.hitboxOffsets.y, w: this.hitboxOffsets.w, h: this.hitboxOffsets.h}
+            }
+
+            // Moves mario and checks collision
+
+            // spawns tile contents or destroys it
+            execTileHit(tile) {
+                
+                //Mario is able to go 1 pixel into tiles he hits. This needs to be implemented at some point
+
+
+                let levelTiles = Game.level.tiles,
+                    xDiff = (this.x + (this.w / 2)) - (tile.x + (tile.w / 2)),
+                    tilePosX = tile.x / 16,
+                    tilePosY = tile.y / 16,
+                    tileRemoved = false;
+                if (xDiff < -7 && levelTiles[tilePosY][tilePosX - 1] instanceof Tile) {
+                    tilePosX -= 1;
+                } else if (xDiff > 7 && levelTiles[tilePosY][tilePosX + 1] instanceof Tile) {
+                    tilePosX += 1;
+                }
+                tile = levelTiles[tilePosY][tilePosX];
+                if (tile.breakable) {
+                    levelTiles[tilePosY][tilePosX] = undefined;
+                    Game.level.createLargeHitboxes();
+                } else {
+                    let item = Game.items[Game.items.indexOf(tile.contents)]
+                    if (typeof tile.contents === "number") {
+
+                        // Checks mario's size to change the tile contents depending on size
+                        if (tile.contents == 6) tile.contents = mario.size == 1 ? 2 : 3;
+                        
+                        // This is where the items are spawned
+                        switch (tile.contents) {
+                            case 1: // Coin
+
+                                // Give player coin + points
+                                Game.coins ++
+                                Game.score += Game.pointValues.coin;
+
+                                // Animate coin above tile
+                                let coin = new Coin(tile.x, tile.y, true);
+                                tile.contents = coin;
+                                break;
+                            case 2: // Mushroom
+                                let mushroom = new Mushroom(tile.x, tile.y, Game.pointValues.powerUp);
+                                Game.items.push(mushroom);
+                                tile.contents = mushroom;
+                                break;
+                            case 3: // Flower
+                                let flower = new Flower(tile.x, tile.y);
+                                Game.items.push(flower);
+                                tile.contents = flower;
+                                break;
+                            case 4: // Star
+                                let star = new Star(tile.x, tile.y);
+                                Game.items.push(star);
+                                tile.contents = star;
+                                break;
+                            case 5: // Vine
+                                // Vine may have to have extra attribute pointing to which extra section of the level to travel to
+                                let vine = new Vine(tile.x, tile.y);
+                                //this.contents = vine;
+                                break;
+                        }
+                        tile.contents.spawn();
+                    }
+                }
+                Game.items.forEach(item => {if (item instanceof Mushroom || item instanceof ExtraLife) if (item.checkIfTouching(tile)) item.bounce(tile)})
+            }
+
+            // Changes mario based on his size
+            onhit() {
+                Game.level/*worlds[Game.currentWorld][Game.currentLevel]*/.enemies.forEach(enemy => {
+                    if (this.activeStar) return false;
+                    if (this.checkIfTouching(enemy)) {
+                        switch (this.hitboxOffsets.y) {
+                            case 24: // Tall mario
+                                // Mario's sprite needs to be changed to standing for the shrink animation
+                                this.sprite = assets.overworld.mario.normal.big.stand;
+                                /*
+                                    this is where the big-to-small animation will play.
+                                    when mario is hit, animation plays, making him smaller
+                                    when animation finished, y-coord needds to be decreased by 16 (i think, may be subject to change)
+                                */
+        
+                                // Shrink animation
+                                //animation here
+        
+                                // Final sprite for animation
+                                this.sprite = assets.overworld.mario.normal.small.stand;
+        
+                                // Y-axis modification
+                                this.y += 16;
+                                this.h = 16;
+        
+                                this.hitboxOffsets = {x: 4, y: 4, w: 8, h: 12}
+                                this.hitbox = {x: this.x + this.hitboxOffsets.x, y: this.y + this.hitboxOffsets.y, w: this.hitboxOffsets.w, h: this.hitboxOffsets.h}
+                                this.size = 1;
+                                return true;
+                            case 12: // Short mario
+                                //mario loses life, level resets (or game over)
+                                this.checkLives();
+                                return true;
+                        }
+                    }
+                })
+            }
+            
+            // Checks how many lives mario has. will either take away a life and check if game over, or just check game over
+            checkLives() {
+                // If lives == 0, game over
+                // Else restart from checkpoint (reset size)
+            }
+        }
+        
+        class Enemy extends Entity {
+            constructor(x, y, hitboxX, hitboxY, hitboxW, hitboxH, sprite, velocity, type) {
+                super(
+                    x,
+                    y,
+                    hitboxX,
+                    hitboxY,
+                    hitboxW,
+                    hitboxH,
+                    sprite
+                );
+                //initial velocity must be negative else enemies will walk away from mario
+                this.speed = -velocity;
+                this.originalSpeed = -velocity;
+                this.velocityY = 0;
+                this.type = type; // Ground, Air, Water, etc. Used to ensure collision doesn't run unnecessarily
+                this.gravity = mario.physics.jumpPhysics.lower.fallingGravity * 2; //Might differ per enemy type, might not
+                this.fallingGravity = mario.physics.jumpPhysics.lower.fallingGravity / 2; //Might differ per enemy type, might not
+                this.originalGravity = this.gravity;
+                this.horizontalCollision = false;
+                this.spawned = false;
+                this.collisions = {
+                    left: false,
+                    right: false,
+                    top: false,
+                    bottom: false
+                }
+            }
+
+            // Draw method for some reason
+            draw() {
+                Game.drawAsset(this);
+            }
+
+            checkSpawn() {
+                if (!this.spawned) {
+                    if (mario.x >= this.x - (Game.block * 12)) this.spawned = true;
+                }
+            }
+
+            // When something collides with it
+            hit(obj) {
+                /*
+                Check instance of object
+                if mario, check if jumped on/ hit from below. If returns false, check if activeStar. If jumped on, run jumpedOn(). If hit through tile (like with mushrooms), run hitBottom()
+                if shell/fireball, hit enemy
+                */
+                if (obj instanceof Mario) {
+                    obj.givePowerup(0);
+                } else if (obj instanceof Fireball || obj instanceof Shell) {
+                    /*
+                        enemy gets hit
+                        check enemy type
+                        enemy vulnerability to fireball grouping:
+                        insta-kill: Goomba, Koopa Troopa (Green & Red)(But not when they’re already in their shells),
+                                    Koopa Paratroopa (wings disappear and they die directly), Buzzy Beetle, Hammer Bro, Lakitu,
+                                    Spinies, Bloober (squid), Cheep Cheep (red & green), Piranha Plant, Bullet Bill,
+                                    Buzzy Beetle (again, includes ceiling ones)
+                        bullet bills are only killable by jumping on them. They can only be killed by a shell if they DID NOT originate from a turret.
+                        Podoboo (lava fireball) is completely invincible, even to star ability
+
+                        Multiple hits: Bowser (5 hits)
+
+                        Immune: Bullet Bill, Bowser's fireballs, firebars
+                    */
+                } else {
+
+                }
+            }
+
+            // When mario jumps on enemy
+            jumpedOn() {
+                /*
+                    Check if this instanceof Goomba, Koopa, ParaKoopa (Koopa with wings), Buzzy Beetle, Spiny, Lakitu, Hammer Bro, Bullet Bill, Cheep Cheep
+                    Goomba: kill and animate death and point procurement
+                    Koopa:
+                        normal:
+                            switch state to in-shell, animate point procurement
+                        in-shell:
+                            stationary:
+                                start moving in corresponding direction, animate point procurement
+                            moving:
+                                if hit by mario on the side, change mario size
+                                if hit on top, make stationary and animate point procurement
+                    ParaKoopa:
+                        normal:
+                            switch state to no-wings, animate point procurement
+                        no-wings:
+                            normal Koopa method
+                        in-shell:
+                            normal Koopa method
+                    Buzzy Beetle:
+                        normal:
+                            switch state to in-shell
+                        in-shell:
+                            stationary:
+                                start moving
+                            moving:
+                                make stationary
+                    Lakitu:
+                        death and animate point procurement
+                    Bullet Bill:
+                        kill, animate death, animate point procurement
+                    Cheep Cheep (in-air only):
+                        kill, animate death, animate point procurement
+                */
+            }
+
+            // When mario hits enemy underneath a tile
+            hitBottom() {
+                /*
+                    Check enemy instance: Goomba, Koopa, ParaKoopa, Buzzy Beetle, Spiny, Hammer Bro. the rest don't do anything (as far as I know)
+                    
+                */
+            }
+
+            checkAdjacentTiles() {
+                let tiles = Game.level.tiles,
+                    iX = Math.floor(this.x / 16),
+                    iY = Math.floor(this.y / 16);
+                if (iX > tiles[0].length || iY > tiles.length) return;
+                let t1 = tiles[iY][iX - 1],
+                    t2 = tiles[iY][iX + 1];
+                if (t1 instanceof Tile && t2 instanceof Tile) {
+                    let c1 = this.checkIfTouching(tiles[iY][iX - 1]),
+                    c2 = this.checkIfTouching(tiles[iY][iX + 1]);
+                    if (c1 && c2) {
+                        this.speed = 0;
+                    } else this.speed = this.originalSpeed;
+                }
+
+            }
+        }
+
+        // Goomba class
+        class Goomba extends Enemy {
+            constructor(x, y) {
+                super(
+                    x, y,
+                    2, 2, 12, 12,
+                    assets.overworld.enemies.goomba.walk[1],
+                    mario.physics.groundPhysics.walk.maxSpeed / 2 /*should be about 2 tiles/s*/,
+                    "goomba"
+                );
+                //this.sprite = sprite;
+                this.velocityY = 0;
+                this.gravity = mario.physics.jumpPhysics.lower.fallingGravity / 2;
+            }
+        }
+
+        // Koopa class
+        class Koopa extends Enemy {
+            constructor(x, y, colour) {
+                super(
+                    x, y,
+                    2, 9, 12, 12,
+                    assets.overworld.enemies.koopa.ground[colour][1],
+                    mario.physics.groundPhysics.walk.maxSpeed / 2 /*should be about 2 tiles/s*/,
+                    "koopa"
+                );
+                //this.sprite = sprite;
+                this.velocityY = 0;
+                this.gravity = mario.physics.jumpPhysics.lower.fallingGravity / 2;
+                this.colour = colour;
+            }
+
+            // Koopa in shell. being hit pushes it in required direction, can kill other enemies
+            inShell() {
+
+            }
+
+            // Changes the direction of red Koopas when they reach the end of a row of tiles
+            changeRedDirection() {
+                //check if there is a tile to the left/right of the tile they are standing on
+                //if yes, keep moving
+                //if no, change direction
+                let ix1 = Math.round((this.x - 8) / 16),
+                    ix2 = Math.round((this.x + 8) / 16),
+                    iy = Math.floor(this.y / 16) + 2,
+                    tiles = Game.level.tiles;
+                if (iy > tiles.length || iy < 0) return;
+                let tile1 = tiles[iy][ix1],
+                    tile2 = tiles[iy][ix2];
+                if (!(tile1 instanceof Tile) || !(tile2 instanceof Tile)) {
+                    this.speed *= -1;
+                    this.originalSpeed = this.speed;
+                }
+            }
+        }
+
+        // ParaKoopa class
+        class Parakoopa extends Koopa {
+            constructor(x, y) {
+                super(
+                    x, y,
+                    2, 9, 12, 12,
+                    assets.overworld.enemies.koopa.air[1].l,
+                    mario.physics.groundPhysics.walk.maxSpeed /*should be about 2 tiles/s*/,
+                    "parakoopa"
+                )
+                this.gravity = mario.physics.jumpPhysics.lower.fallingGravity / 2;
+                this.sprite = assets.overworld.enemies.koopa.air[1].l;
+            }
+
+            setParakoopaVelocity() {
+                this.velocityY = -mario.physics.jumpPhysics.lower.holdingJumpGravity * 30;
+            }
+
+            hit() {
+
+            }
+            loseWings() {
+
+            }
+        }
+
+        class Plant extends Enemy {
+            constructor(x, y) {
+                super(
+                    x, y,
+                    3, 14, 10, 6,
+                    assets.overworld.enemies.plant.green[1].l,
+                    0, "plant"
+                )
+            }
+
+            // will either create its own moveEnt() method for moving in and out of pipes, or create a different method entirely for it
+            moveEnt() { // Keeping blank move method so that the plant does not move.
+
+            }
+        }
+
+        class Lakitu extends Enemy {
+            constructor(x, y) {
+                super(
+                    x, y,
+                    2, 9, 12, 12,
+                    assets.overworld.enemies.lakitu.green[1].l,
+                    0, "lakitu"
+                )
+            }
+
+            //has different mechanics and physics to all other enemies, so will need to make its own moveEnt() method
+            moveEnt() {
+
+            }
+        }
+
+        class Fish extends Enemy {
+            constructor(x, y, colour) {
+                super(
+                    x, y,
+                    2, 9 , 12, 12,
+                    assets.overworld.enemies.fish[colour][1].l,
+                    0, "fish"
+                )
+            }
+
+            //needs its own movement method
+            moveEnt() {
+                
+            }
+        }
+
+        class Bro extends Enemy {
+            constructor(x, y, colour) {
+                super(
+                    x, y,
+                    2, 9, 12, 12,
+                    assets.overworld.enemies.bro[colour].normal[1].l,
+                    0, "bro"
+                )
+            }
+
+            //jumping intervals and number of hammers thrown before jumping are set to random intervals (usually 2-4 hammers before jumping)
+            moveEnt() {
+
+            }
+
+            throwHammer() {
+
+            }
+        }
+
+        class Bowser extends Enemy {
+            constructor(x, y, colour) {
+                super(
+                    x, y,
+                    2, 9, 12, 12,
+                    assets.overworld.enemies.bowser[colour][1].l,
+                    0, "bowser"
+                )
+            }
+
+            moveEnt() {
+
+            }
+
+            throwHammer() {
+
+            }
+
+            spewFireball() {
+
+
+            }
+        }
+
+        class Spiny extends Enemy {
+            constructor(x, y) {
+                super(
+                    x, y,
+                    2, 9, 12, 12,
+                    assets.overworld.enemies.spiny.walk[1].l,
+                    0, "spiny"
+                )
+            }
+            //doesnt need a modified moveEnt() as it is a basic enemy (only when thrown down by a Lakitu does it need to be different)
+            spawnFromLakitu() {
+
+            }
+        }
+
+        class EnemyFireball extends Enemy {
+            constructor(x, y) {
+                super(
+                    x, y,
+                    2, 9, 12, 12,
+                    assets.overworld.enemies.fireball.l,
+                    0, "fireball"
+                )
+            }
+        }
+        
+        class Item {
+            constructor(x, y, hitboxX, hitboxY, hitboxW, hitboxH) { // Value is the number of points given when picked up
+                this.x = x;
+                this.y = y;
+                this.hitboxOffsets = {x: hitboxX, y: hitboxY, w: hitboxW, h: hitboxH}
+                this.hitbox = {x: this.x + hitboxX, y: this.y + hitboxY, w: hitboxW, h: hitboxH}
+                this.value = Game.pointValues.powerUp;
+                this.collected = false;
+                this.canBeCollected = false;
+                this.hasTileBelow = false;
+                this.spawnY = y;
+            }
+
+            draw() {Game.drawAsset(this)}
+            
+            // Allows instantaneous adding to X
+            addX(x) {
+                this.x += x;
+                this.hitbox.x = this.x + this.hitboxOffsets.x;
+            }
+
+            // Allows simple setting of X
+            setX(x) {
+                this.x = x;
+                this.hitbox.x = this.x + this.hitboxOffsets.x;
+            }
+            
+            // Allows instnataneous adding to Y
+            addY(y) {
+                this.y += y;
+                this.hitbox.y = this.y + this.hitboxOffsets.y;
+            }
+
+            // Allows simple setting of Y
+            setY(y) {
+                this.y = y;
+                this.hitbox.y = this.y + this.hitboxOffsets.y;
+            }
+            
+            // Used to spawn the physical Item into the game and float it out of the tile
+            spawn() {
+                if (this.spawned) return true;
+                //this.spawned = true;
+                let floatHeight = 15;
+                //for loop
+                //increment y value over 2 seconds
+                //Game.fps/2000
+                //Game.items.push(this);
+                this.draw();
+                setInterval(() => {
+                    if (this.y <= this.spawnY - floatHeight) {
+                        clearInterval();
+                        this.spawned = true;
+                        this.canBeCollected = true;
+                        this.hitbox.y = this.y + this.hitboxOffsets.y
+                        return true;
+                    };
+                    this.y -= 14 / Game.fps;
+                }, 1000 / Game.fps);
+                return true;
+            }
+
+            checkIfTouching(collider) {
+                if (!collider) return false;
+                let col = collider instanceof Mario ? collider.hitbox : collider
+                return !(
+                    this.hitbox.x > col.x + col.w ||
+                    this.hitbox.x + this.hitbox.w < col.x ||
+                    this.hitbox.y > col.y + col.h ||
+                    this.hitbox.y + this.hitbox.h < col.y
+                )
+            }
+
+            // Checks if there is a tile 1 pixel below item to stop it from falling
+            checkIfBelow(collider) {
+                if (collider)
+                /*
+                    if item y + item h < tile h 
+                    and
+                    item y + item h > tile h - 1
+                */
+
+                // Check if collider is close enough to the tile
+                if (Math.floor(this.hitbox.x) < collider.x + collider.w && Math.floor(this.hitbox.x + this.hitbox.w) > collider.x) {
+
+                    // Check if collider is 1 pixel below item
+                    if (this.y + this.h + 1 == collider.y) {
+                        return true;
+                    }
+                }
+                return false;
+            }
+
+            checkTileCollision(obj) {
+                if (this.collected) return false;
+                if (obj && this.checkIfTouching(obj)) {
+                    let entityHitboxHalfW = this.w / 2,
+                        entityHitboxHalfH = this.h / 2,
+                        colliderHalfW = obj.w / 2,
+                        colliderHalfH = obj.h / 2,
+                        entityHitboxCenterX = this.x + this.w / 2,
+                        entityHitboxCenterY = this.y + this.h / 2,
+                        colliderCenterX = obj.x + obj.w / 2,
+                        colliderCenterY = obj.y + obj.h / 2,
+                        
+                        diffX = entityHitboxCenterX - colliderCenterX,
+                        diffY = entityHitboxCenterY - colliderCenterY,
+                        
+                        minXDist = entityHitboxHalfW + colliderHalfW,
+                        minYDist = entityHitboxHalfH + colliderHalfH,
+                        
+                        depthX = diffX > 0 ? minXDist - diffX : -minXDist - diffX,
+                        depthY = diffY > 0 ? minYDist - diffY : -minYDist - diffY;
+                        if (depthX != 0 && depthY != 0) {
+                            if (Math.abs(depthX) < Math.abs(depthY)) {
+                                return depthX > 0 ? "left" : "right";
+                            } else {
+                                return depthY > 0 ? "top" : "bottom";
+                            }
+                        } else return false;
+                } else return false;
+            }
+            startAnimation() {
+                this.animationInterval = setInterval(() => {
+                    if (this.spriteIndex >= 3) Game.coinAnimationDirection = -1;
+                    else if (this.spriteIndex <= 1) {
+                        Game.coinAnimationDirection = 1;
+                        this.stopAnimation();
+                    }
+                    this.sprite = sprites.tiles.coins.coin[this.spriteIndex];
+                    this.spriteIndex += Game.coinAnimationDirection;
+                }, 1000 / Game.fps * 9);
+            }
+            stopAnimation() {
+                clearInterval(this.animationInterval)
+                if (!this.collected) setTimeout(() => this.startAnimation(), 1000 / Game.fps * 18)
+            }
+
+            /*
+                function to check collision of item
+                    use entity collision checker (unsure about variables, may have to create separate function for items)
+                    if collision, give mario the ability and remove the item from memory to stop it from checking/drawing anything
+                    if no collision, request animation from of function
+                alternative:
+                    do all above but instead of animation frame, use setInterval in a variable and clear it if collision=true
+            */
+        }
+        
+        class Coin extends Item {
+            constructor(x, y, dynamic = false) {
+                super(x, y);
+                this.w = 16;
+                this.h = 16;
+                this.spriteIndex = 1;
+                this.sprite = assets.overworld.tiles.coins.coin[this.spriteIndex];
+                this.spriteList = assets.overworld.tiles.coins.coin
+                /*[    
+                    preRenderAsset(sprites.tiles.coins.coin[1], sprites.colours.overoworld.items), // Coin 1
+                    preRenderAsset(sprites.tiles.coins.coin[2], sprites.colours.overoworld.items), // Coin 2
+                    preRenderAsset(sprites.tiles.coins.coin[3], sprites.colours.overoworld.items), // Coin 3
+                ]*/
+                this.value = Game.pointValues.coin;
+                this.startAnimation();
+            }
+        }
+        
+        class Mushroom extends Item {
+            constructor(x, y) {
+                super(x, y, 2, 0, 12, 16);
+                this.sprite = assets.overworld.items.mushroom.l;
+                this.w = 16;
+                this.h = 16;
+                this.spawned = false;
+                this.speed = mario.physics.groundPhysics.walk.maxSpeed / 2;
+                this.velocityY = 0;
+                this.gravity = mario.physics.jumpPhysics.lower.fallingGravity / 2;
+                this.collisions = {
+                    left: false,
+                    right: false,
+                    top: false,
+                    bottom: false
+                }
+            }
+
+            // Method to move mushroom once spawned
+            move() {
+                // move mushroom at same speed as mario's max walk velocity
+                /*
+                    Method:
+                        check if mushroom colliding with any tile on left/right
+                        if yes invert velocity and speed
+                        move mushroom
+                */
+                if (!this.collected) {
+                    /*
+                        For mushroom collision, use a smaller hitbox for mario
+                        use regular size for tiles and such
+                    */
+                    this.x += this.speed;
+                    this.hitbox.x = this.x + this.hitboxOffsets.x;
+                    this.velocityY += this.gravity;
+                    this.y += this.velocityY;
+                    this.hitbox.y = this.y + this.hitboxOffsets.y;
+                    let isBelow = false;
+                    Game.level.largeHitboxes.forEach(hb => {
+                        let side = this.checkTileCollision(hb);
+                        if (side == "left" && !this.collisions.left) {
+                            this.collisions.left = true;
+                            this.speed *= - 1;
+                            this.setX(hb.x + hb.w - this.hitboxOffsets.x);
+                        }
+                        if (side == "right" && !this.collisions.right) {
+                            this.collisions.right = true;
+                            this.speed *= - 1;
+                            this.setX(hb.x - this.w + this.hitboxOffsets.x);
+                        }
+                        if (side == "bottom" && !this.collisions.bottom) {
+                            this.collisions.bottom = true;
+                            this.setY(hb.y - this.h + this.hitboxOffsets.y);
+                            this.velocityY = 0;
+                        }
+                        this.hasTileBelow = this.checkIfBelow(hb);
+                        if (this.hasTileBelow) {
+                            isBelow = true;
+                            this.setY(hb.y - this.hitbox.h);
+                        }
+                    })
+                    let indexX = Math.floor(this.x / 16),
+                        indexY = Math.floor(this.y / 16),
+                        iterationsX = 2,
+                        iterationsY = 3,
+                        startX = indexX < 0 ? 0 : indexX - iterationsX,
+                        startY = indexY < 0 ? 0 : indexY - iterationsY,
+                        endX = indexX + iterationsX,
+                        endY = indexY + iterationsY,
+                        levelTiles = Game.level.tiles,
+                        longestRow = levelTiles.reduce((longestIndex, currentList, currentIndex, array) => {
+                            return currentList.length > array[longestIndex].length ? currentIndex : longestIndex;
+                        }, 0);
+                        if (indexY + endY > levelTiles.length) endY = levelTiles.length - 1;
+                    for (let y = startY; y <= endY; y ++) {
+                        if (y > levelTiles.length) break;
+                        let row = levelTiles[y];
+                        for (let x = startX; x <= levelTiles[y].length; x ++) {
+                            let tile = row[x],
+                                side = this.checkTileCollision(tile);
+                            if (side == "left" && !this.collisions.left) {
+                                this.collisions.left = true;
+                                this.speed *= -1;
+                                this.setX(tile.x + tile.w);
+                            }
+                            if (side == "right" && !this.collisions.right) {
+                                this.collisions.right = true;
+                                this.speed *= -1;
+                                this.setX(tile.x - tile.w);
+                            }
+                            if (side == "bottom" && !this.collisions.bottom) {
+                                this.collisions.bottom = true;
+                                this.setY(tile.y - this.h);
+                                this.velocityY = 0;
+                            }
+                            this.hasTileBelow = this.checkIfBelow(tile);
+                            if (this.hasTileBelow) {
+                                isBelow = true;
+                                this.setY(tile.y - this.h);
+                            }
+                        }
+                    }
+                    if (isBelow) {
+                        this.velocityY = 0;
+                        this.gravity = 0;
+                        this.hasTileBelow = true;
+                    } else {
+                        this.gravity = mario.physics.jumpPhysics.lower.fallingGravity / 2;
+                    }
+                }
+                this.hitbox.x = this.x + this.hitboxOffsets.x;
+                this.hitbox.y = this.y + this.hitboxOffsets.y;
+                this.collisions = {
+                    left: false,
+                    right: false,
+                    top: false,
+                    bottom: false
+                }
+            }
+
+            // Method to make mushrooms bounce when tile below is hit by mario
+            bounce(tile) {
+                if (tile) if (this.spawned)
+                    if (this.checkIfTouching(tile)) {
+                        mario.y -= 2;
+                        mario.hitbox.y -= 2;
+                        let entSide = mario.checkCollisionSide(tile);
+                        mario.y += 2;
+                        mario.hitbox.y += 2;
+                        this.y +=2;
+                        this.hitbox.y += 2
+                        let itemSide = this.checkTileCollision(tile);
+                        this.y -= 2;
+                        this.hitbox.y -= 2;
+                        if (entSide == "top" && itemSide == "bottom") {
+                            //here is where would check which side both item and mario are on
+                            /*
+                                hold "left"/"right" for both item and mario
+                            */
+                            //itemSide = this.hitbox.x + (this.hitbox.w / 2) < tile.x + (tile.w / 2) ? "left" : "right";
+                            itemSide = this.x + (this.w / 2) < tile.x + (tile.w / 2) ? "left": "right";
+                            //entSide = mario.hitbox.x + (mario.hitbox.w / 2) < tile.x + (tile.w / 2) ? "left" : "right";
+                            entSide = mario.x + (mario.w / 2) < tile.x + (tile.w / 2) ? "left" : "right";
+                            
+                            // Compares the sides that the entity and item are on, to determine whether to change the item's direction
+                            if (
+                                (itemSide == "left" && entSide == "right" && this.speed > 0) ||
+                                (itemSide == "right" && entSide == "left" && this.speed < 0)
+                            ) this.speed *= -1;
+                            //mushroom jump is 1 tile high
+                            //length of time is about 1 second
+                            this.velocityY = - 4.5;
+                        }
+                    }
+            }
+        }
+        
+        class Flower extends Item {
+            constructor(x, y) {
+                super (x, y, 2, 0, 12, 16);
+                this.sprite = preRenderAsset([...sprites.items.flower.head[1].flowerPower, ...sprites.items.flower.stem], sprites.colours.overworld.items).l;
+                this.spriteList = [
+                    assets.overworld.items.flower[0],
+                    assets.overworld.items.flower[1],
+                    assets.overworld.items.flower[2],
+                    assets.overworld.items.flower[3],
+                    /*preRenderAsset([...sprites.items.flower.head[1].flowerPower, ...sprites.items.flower.stem], sprites.colours.overworld.items).l,
+                    preRenderAsset([...sprites.items.flower.head[2], ...sprites.items.flower.stem], sprites.colours.overworld.items).l,
+                    preRenderAsset([...sprites.items.flower.head[3], ...sprites.items.flower.stem], sprites.colours.overworld.items).l,
+                    preRenderAsset([...sprites.items.flower.head[4], ...sprites.items.flower.stem], sprites.colours.overworld.items).l*/
+                ]
+                this.spriteIndex = 0;
+            }
+        }
+        
+        class ExtraLife extends Mushroom {
+            constructor(x, y) {
+                super(x, y);
+                this.sprite = assets.overworld.items.ExtraLife.l;
+                this.value = Game.pointValues.powerUp;
+                this.w = 16;
+                this.h = 16;
+            }
+        }
+        
+        class Fireball extends Entity { // Fireball class
+            constructor(x, y) {
+                /*
+                    Spawns in front of mario (direction dependent)
+                    First bounce is 1 tile ahead of him
+                    Bounces 4 tiles forward each time
+                    Fireball able to bounce 3 times per second, with an X velocity of 2 tiles per second
+                    Bounces just over 1 tile every time
+                */
+                super(x, y, 0, 0, 8, 8, sprites.dynamicObjects.fireball[1])
+                /*this.x = x;
+                this.y = y;
+                this.w = 8;
+                this.h = 8;*/
+                this.velocityX = 5//Game.pixel * 3; // 3 bounces per second (i think)
+                this.velocityY = 2.7//(Game.pixel / Game.fps) * 50;
+                this.originalVelocityY = this.velocityY;
+                this.gravity = 0.5//0.1; // Makes fireball bounce every 1 second
+            }
+            isTouching(collider) {
+                if (!collider) return false;
+                let colliderProperty = collider.hitbox ? collider.hitbox : collider;
+                return !(
+                    this.x > colliderProperty.x + colliderProperty.w ||
+                    this.x + this.w < colliderProperty.x ||
+                    this.y > colliderProperty.y + colliderProperty.h ||
+                    this.y + this.h < colliderProperty.y
+                )
+            }
+            checkCollision() {
+                let collided = false;
+                if (this.y > 400) {
+                    collided = true;
+                    return;
+                }
+                const checkCol = (tile) => {
+                    let side = this.checkCollisionSide(tile);
+                    if (side == "left" || side == "right") mario.fireballs.splice(mario.fireballs.indexOf(this), 1);
+                    else if (side == "bottom") {
+                        //this.y = tile.y - this.hitbox.h - this.hitboxOffsets.y - 2;
+                        this.y = tile.y - this.h - 2;
+                        this.velocityY = -this.originalVelocityY;
+                    }
+                }
+                Game.level.largeHitboxes.forEach(hb => {
+                    if (!collided) checkCol(hb);
+                })
+                Game.level.tiles.forEach(row => row.forEach(tile => {
+                    if (tile && !collided && !tile.usedInLargeHitbox && !tile.contents) checkCol(tile);
+                }))
+                /*Game.level.enemies.forEach(enemy => {
+                    if (this.isTouching(enemy)) {
+                        enemy.hit();
+                        mario.fireballs.splice(mario.fireballs.indexOf(this), 1);
+                    }
+                })*/
+                this.x += this.velocityX;
+                this.hitbox.x = this.x + this.hitboxOffsets.x;
+                this.y += this.velocityY;
+                this.hitbox.y = this.y + this.hitboxOffsets.y
+                this.velocityY += this.gravity;
+            }
+        }
+
+        class Tile { // Main class for tiles
+            constructor(sprite, x, y, validCollisionSides, breakable, contents = 0, canCheckBelow = false, invisible) {
+                this.sprite = sprite.l; // is number corresponding to index of asset in levelTiles
+                this.isBroken = false;
+                this.breakable = breakable;
+                this.x = x;
+                this.y = y;
+                this.w = 16;
+                this.h = 16;
+                // this is to make the tile only allow certain collisions on certain sides and stops mario from colliding with the wrong sides of tiles that he shouldnt
+                // 0 for none, 1 for wall, 2 for floor, 3 for left corner (allows left side collision), 4 for right corner (allows right side collision)
+                this.validCollisionSides = Game.collisionCombos[validCollisionSides];
+                this.canCheckBelow = canCheckBelow;
+                this.contents = parseInt(contents); //coin is 1, mushroom 2, flower 3, star 4, vine 5, powerup 6 (this is to tell that either a mushroom or flower needs to be spawned depending on mario's size)
+                this.usedInLargeHitbox = false;
+                this.invisible = invisible;
+            }
+            
+            draw() {Game.drawAsset(this)}
+        }
+        
+        /*class Camera {
+            constructor() {
+                this.x = 0;
+                this.y = 0;
+                this.width = 2048;
+                this.height = 400;
+                this.canvasWidth = canvasWidth;
+                this.canvasHeight = canvasHeight;
+            }
+
+            update() {
+                // Center the camera on the player, but only move to the right
+                const desiredX = mario.x + mario.hitboxOffsets.w / 2 - this.canvasWidth / 2;
+                const desiredY = mario.y + mario.hitboxOffsets.h / 2 - this.canvasHeight / 2;
+
+                // Ensure the camera only moves to the right
+                if (desiredX > this.x) {
+                    this.x = desiredX;
+                }
+
+                // Ensure the camera doesn't move out of the world bounds
+                if (this.x < 0) this.x = 0;
+                if (this.y < 0) this.y = 0;
+                if (this.x + this.canvasWidth > this.width) this.x = this.width - this.canvasWidth;
+                if (this.y + this.canvasHeight > this.height) this.y = this.height - this.canvasHeight;
+            }
+
+            apply(ctx) {
+                ctx.setTransform(1, 0, 0, 1, -this.x, -this.y);
+            }
+        }*/
+
+        class Camera {
+            constructor(x, y, width, height, canvasWidth, canvasHeight) {
+                this.x = 0;
+                this.y = 0;
+                this.width = width;
+                this.height = height;
+                this.canvasWidth = canvasWidth;
+                this.canvasHeight = canvasHeight;
+            }
+
+            update() {
+
+                // Center the camera on the player
+                this.x = Math.floor(mario.x + mario.w / 2 - this.canvasWidth / 2);
+                this.y = Math.floor(mario.y + mario.h / 2 - this.canvasHeight / 2);
+
+                // Ensure the camera doesn't move out of the world bounds
+                if (this.x < 0) this.x = 0;
+                if (this.y < 0) this.y = 0;
+                if (this.x + this.canvasWidth > this.width) this.x = this.width - this.canvasWidth;
+                if (this.y + this.canvasHeight > this.height) this.y = this.height - this.canvasHeight;
+            }
+
+            apply() {canvas.setTransform(1, 0, 0, 1, -this.x, -this.y)}
+        }
+
+        class Level {
+            constructor(tiles, tileList, location, entities, background) {
+                //both background and tilemap are a grid of tiles 15x15 and will be in exactly the same format except the background won't be tangible
+                //figure out level generation and creation, then sort out entities and stuff, then introduce the background (should require very little actual code to implement)
+                this.tiles = tiles;
+                this.tileList = tileList;
+                this.location = location;
+                this.entities = entities;
+                this.enemies = [];
+                this.background = background;
+                this.largeHitboxes = [];
+                this.items = [];
+                for (let rowIndex = 0; rowIndex < this.tiles.length; rowIndex ++) {
+                    for (let columnIndex = 0; columnIndex < this.tiles[rowIndex].length; columnIndex ++) {
+                        if (this.tiles[rowIndex][columnIndex]) {
+                            //                                           |               sprite                             |             x           |          y           |          validCollisionSides        |                    breakable                       |
+                            this.tiles[rowIndex][columnIndex] = new Tile(this.tileList[this.tiles[rowIndex][columnIndex][0]], columnIndex * Game.block, rowIndex * Game.block, this.tiles[rowIndex][columnIndex][1], this.tiles[rowIndex][columnIndex][2] ? true : false, this.tiles[rowIndex][columnIndex][3] ? this.tiles[rowIndex][columnIndex][3] : 0);
+                        }
+                    }
+                }
+                this.setEntities();
+                this.createLargeHitboxes();
+            }
+
+            // Creates and sets entities to their set positions
+            setEntities() {
+                this.entities.forEach(e => {
+                    // Checking entity type
+                    switch (e[0]) {
+                        case "goomba": 
+                            this.enemies.push(new Goomba(e[1] * Game.block, e[2] * Game.block));
+                            break;
+                        case "koopa":
+                            this.enemies.push(new Koopa(e[1] * Game.block, e[2] * Game.block, e[3]));
+                            break;
+                        case "parakoopa":
+                            this.enemies.push(new Parakoopa(e[1] * Game.block, e[2] * Game.block));
+                        case "plant":
+                            this.enemies.push(new Plant(e[1] * Game.block, e[2] * Game.block));
+                        case "lakitu":
+                            this.enemies.push(new Lakitu(e[1] * Game.block, e[2] * Game.block));
+                        case "fish":
+                            this.enemies.push(new Fish(e[1] * Game.block, e[2] * Game.block, e[3]));
+                        case "bro":
+                            this.enemies.push(new Bro(e[1] * Game.block, e[2] * Game.block, e[3]));
+                        case "bowser":
+                            this.enemies.push(new Bowser(e[1] * Game.block, e[2] * Game.block, e[3]));
+                        case "spiny":
+                            this.enemies.push(new Spiny(e[1] * Game.block, e[2] * Game.block));
+                        case "fireball":
+                            this.enemies.push(new EnemyFireball(e[1] * Game.block, e[2] * Game.block));
+                    }
+                })
+            }
+
+            /*
+                needs to be modified to only check 1 direction once a direction has been found.
+                possibly check how far across and down the tiles continue, and choose the longest direction to create the hitbox
+            */
+            createLargeHitboxes() {
+
+                // changing all tile usedInLargeHitbox attribute to false
+                this.tiles.forEach(row => row.forEach(tile => {if (tile) tile.usedInLargeHitbox = false;}));
+
+                let tiles = this.tiles;
+                this.largeHitboxes = undefined;
+                this.largeHitboxes = []
+                for (let tileIndexY = 0; tileIndexY < tiles.length; tileIndexY ++) {
+                    for (let tileIndexX = 0; tileIndexX < tiles[tileIndexY].length; tileIndexX ++) {
+                        let row = tiles[tileIndexY];
+                        let currentTile = row[tileIndexX];
+                        if (currentTile && !currentTile.invisible) {
+
+                            // Checks if there is a tile adjacent to current tile
+                            if (tileIndexY + 1 < tiles.length) {
+                                if (tiles[tileIndexY + 1][tileIndexX]) {
+                                    this.tiles[tileIndexY][tileIndexX].usedInLargeHitbox = true;
+                                }
+                            }
+                            if (tileIndexX + 1 < tiles[tileIndexY].length) {
+                                if (tiles[tileIndexY][tileIndexX + 1]) {
+                                    this.tiles[tileIndexY][tileIndexX].usedInLargeHitbox = true;
+                                }
+                            }
+
+                            // Valid collision sides: left=0, right=1, bottom=2, top=3
+                            let newHitbox = {
+                                x: currentTile.x,
+                                y: currentTile.y,
+                                w: currentTile.w,
+                                h: currentTile.h //possibly minus 5 if hitbox needs to be thinner than tiles to allow tiles to be hit
+                            }
+
+                            // Checking if tiles exist to the right of the current tile
+                            // Running through the row adding tiles to hitbox until no tile in index
+                            for (let addingTileIndex = tileIndexX + 1; addingTileIndex < row.length; addingTileIndex ++) {
+                                let nextTile = row[addingTileIndex];
+                                if (nextTile && !nextTile.usedInLargeHitbox) {
+                                    this.tiles[tileIndexY][addingTileIndex].usedInLargeHitbox = true;
+
+                                    // Changes valid collision sides to stop mario from clipping and stopping velocity when it shouldn't
+                                    this.tiles[tileIndexY][tileIndexX].validCollisionSides = Game.collisionCombos[12];
+                                    //this.tiles[tileIndexY][addingTileIndex].validCollisionSides[0] = false;
+                                    //this.tiles[tileIndexY][addingTileIndex].validCollisionSides[1] = false;
+                                    newHitbox.w += Game.block;
+                                } else {
+                                    if (newHitbox.w > 16) this.largeHitboxes.push(newHitbox);
+                                    break;
+                                }
+                            }
+
+                            if (newHitbox.w == 16)
+
+                            // Checking tile below current tile
+                            if (tiles[tileIndexY + 1]) {
+                                if (tiles[tileIndexY + 1][tileIndexX])
+
+                                // Runnning through the column adding tiles to hitbox until no tile in index
+                                for (let addingTileIndex = tileIndexY + 1; addingTileIndex < tiles.length; addingTileIndex ++) {
+                                    let nextTile = tiles[addingTileIndex][tileIndexX];
+                                    if (nextTile)
+                                    if (!nextTile.usedInLargeHitbox) {
+                                        this.tiles[addingTileIndex][tileIndexX].usedInLargeHitbox = true;
+
+                                        // Changes valid collision sides to stop mario from clipping and stopping velocity when it shouldn't
+                                        this.tiles[addingTileIndex][tileIndexX].validCollisionSides = Game.collisionCombos[3];
+                                        newHitbox.h += Game.block;
+                                    } else break;
+                                    else break;
+                                }
+                            }
+                            if (newHitbox.w > 16 || newHitbox.h > 16) this.largeHitboxes.push(newHitbox);
+                            if (!currentTile.usedInLargeHitbox) currentTile.validCollisionSides = Game.collisionCombos[0];
+                        }
+                    }
+                }
+            }
+        }
+
+        //tilesets that use different tiles from different sets should be assigned in a list to ensure they can still be used
+
+        // Function that can pre-render tiles and should be used to be saved in variables
+        /*function preRenderAsset(tile, palette) {
+            let rowLengths = [];
+            tile.forEach(row => rowLengths.push(parseInt(row.length)));
+            const offscreenCanvas = document.createElement('canvas');
+            const renderCanvas = offscreenCanvas.getContext('2d');
+            offscreenCanvas.width = Math.max(...rowLengths);
+            offscreenCanvas.height = tile.length;
+            offscreenCanvas.style.border = "none";
+            for (let y = 0; y < 16; y ++) {
+                for (let x = 0; x < 16; x ++) {
+                    if (tile[y][x] > -1) {
+                        let index = tile[y][x];
+                        renderCanvas.beginPath();
+                        renderCanvas.fillStyle = palette[index];
+                        renderCanvas.fillRect(x, y, 1, 1);
+                    }
+                }
+            }
+            return offscreenCanvas;
+        }*/
+        Game.drawAsset = (asset) => {
+            if (asset.sprite instanceof HTMLCanvasElement) {
+                bufferCanvas.drawImage(asset.sprite, asset.x, asset.y)
+            } else bufferCanvas.drawImage(asset.sprite[asset.direction], asset.x, asset.y)
+        }
+
+        // Function to find the longest nested array
+        Game.getLongestLow = (arr) => {
+            return arr.reduce((longest, current) => {
+                return current.length > longest.length ? current : longest;
+            }, []);
+        };
+
+        Game.updateLevel = () => {
+            Game.level = Game.worlds[Game.currentWorld][Game.currentLevel];
+        }
+
+        Game.updateEnem = () => {
+            let level = Game.level;
+            level.enemies.forEach(e => {
+                if (e instanceof Enemy) {
+                    if (!e.spawned) {
+                        e.checkSpawn();
+                    } else {
+                        e.checkAdjacentTiles();
+                        e.moveEnt();
+                        let originalSpeed = e.speed;
+                        if (!e.collisions.bottom) e.gravity = e.fallingGravity//e.originalGravity;
+                        if (e.collisions.left && e.collisions.right) {
+                            e.speed = 0;
+                        } else if (e.collisions.left || e.collisions.right) {
+                            e.originalSpeed = e.speed;
+                        } else e.speed = e.originalSpeed;
+                        //if (e.horizontalCollision) e.speed *= -1;
+                        e.horizontalCollision = false;
+                        e.checkAdjacentTiles();
+                    }
+                    if (e instanceof Koopa && e.colour == "red") e.changeRedDirection();
+                }
+            })
+        }
+
+        // Calls alll methods for moving entities
+        Game.moveAllEntities = () => {
+            mario.updatePhysics();
+            mario.moveEnt();
+            Game.updateEnem();
+
+            // Handles item collision
+            Game.items.forEach(item => {
+                if (item instanceof Item && item.canBeCollected) {
+                    if (item instanceof Mushroom) {
+                        if (item.canBeCollected && !item.collected) {
+                            if (item.checkIfTouching(mario)) {
+                                item.collected = true;
+                                mario.givePowerup(1);
+                                item = undefined;
+                            } else item.move();
+                        }
+                    } else if (item instanceof Flower) {
+                        if (item.canBeCollected && !item.collected) {
+                            if (item.checkIfTouching(mario)) {
+                                item.collected = true;
+                                if (mario.size == 1) mario.givePowerup(1);
+                                mario.givePowerup(2);
+                                item = undefined;
+                            }
+                        }
+                    }
+                }
+            })
+
+            // Fireball loop to run collision detection
+            if (mario.fireballs.length) mario.fireballs.forEach(ball => {
+                ball.checkCollision();
+            })
+        }
+        
+        // Calls all methods for drawing
+        Game.drawObjects = (level) => {
+            
+            // Draws items in Game.items as well as hitboxes (if desired)
+            Game.items.forEach(item => {
+                if (item != undefined)
+                if (item instanceof Item)
+                if (!item.collected) {
+                    item.draw();
+                    //canvas.beginPath(); canvas.fillStyle = "blue"; canvas.fillRect(item.hitbox.x, item.hitbox.y, item.hitbox.w, item.hitbox.h);
+                    //bufferCanvas.beginPath(); bufferCanvas.fillStyle = "blue"; bufferCanvas.fillRect(item.hitbox.x, item.hitbox.y, item.hitbox.w, item.hitbox.h);
+                }
+            });
+
+            // Draws tiles
+            //level.tiles.forEach(row => row.forEach(tile => {if (tile instanceof Tile && !tile.isBroken) canvas.drawImage(tile.sprite, tile.x, tile.y)}));
+            level.tiles.forEach(row => row.forEach(tile => {if (tile instanceof Tile && !tile.isBroken) Game.drawAsset(tile)}));// bufferCanvas.drawImage(tile.sprite, tile.x, tile.y)}));
+            //level.largeHitboxes.forEach(hitbox => {canvas.beginPath();canvas.fillStyle = "red";canvas.fillRect(hitbox.x + 1, hitbox.y + 1, hitbox.w - 2, hitbox.h - 2)});
+            //level.largeHitboxes.forEach(hitbox => {bufferCanvas.beginPath();bufferCanvas.fillStyle = "red";bufferCanvas.fillRect(hitbox.x + 1, hitbox.y + 1, hitbox.w - 2, hitbox.h - 2)});
+
+            //Draw enemies
+            level.enemies.forEach(e => {
+                e.draw();
+                e.drawHitbox("black");
+            })
+
+            // Draw mario
+            if (mario.sprite == sprites.mario.small.stand) {
+                mario.x --
+                mario.draw();
+                mario.x ++
+            } else mario.draw(); //unsure if code above and below makes mario's sprite go up by 1 pixel
+
+            // Draws hitbox
+            mario.drawHitbox("green");
+
+            // Draws enemies
+            /*Game.enemies.forEach(enemy => {
+                if (enemy instanceof Enemy) return false;
+            })*/
+
+            // Draws fireballs
+            mario.fireballs.forEach(ball => {
+                ball.draw();
+                /*canvas.beginPath();
+                canvas.fillStyle = "grey";
+                //canvas.fillRect(ball.hitbox.x, ball.hitbox.y, ball.hitbox.w, ball.hitbox.h)*/
+                bufferCanvas.beginPath();
+                bufferCanvas.fillStyle = "grey";
+                //bufferCanvas.fillRect(ball.hitbox.x, ball.hitbox.y, ball.hitbox.w, ball.hitbox.h)
+            })
+            canvas.drawImage(bufferElem, 0, 0);
+        }
+        /*
+            use indexing in new Level() that gets the block class and creates it where new Tile() is above
+
+            instead of multiple tile classes, perhaps use 1 tile class and use attributes in the use tile section of the new level 
+            that defines what the block does, if it can be broken, if it drops something, etc.
+        */
+        
+        function initGame() {
+            // Automatically focus canvas when tab/window is in focus
+            window.addEventListener("focus", () => {
+                canvasElem.focus();
+            });
+            // Initialize game elements
+            Game.setResolution();
+            camera = new Camera(0, 0, 2048, 400, canvasElem.width, canvasElem.height); // Adjust world dimensions accordingly
+            Game.updateLevel();
+        }
+
+        const   canvasWidth = parseInt(canvasElem.getAttribute("width")),
+                canvasHeight = parseInt(canvasElem.getAttribute("height"));
+        let mario = new Mario(150, 200),
+            camera = new Camera;
+        // Event listeners for mario movement
+        document.addEventListener("keydown", (e) => {
+            if (e.key == "a" || e.key == "A" || e.key == "ArrowLeft") {if (!mario.crouching) mario.keys.left = true; mario.movementFromCrouch.left = true; mario.lastMovementX = "left";}
+            if (e.key == "d" || e.key == "D" || e.key == "ArrowRight") {if (!mario.crouching) mario.keys.right = true; mario.movementFromCrouch.right = true; mario.lastMovementX = "right";}
+            if (e.key == "w" || e.key == "W" || e.key == "ArrowUp" || e.key == " ") {mario.keys.up = true;inptime = e.timeStamp;}
+            if (e.key == "s" || e.key == "S" || e.key == "ArrowDown") {mario.keys.down = true; mario.crouch(); if (!mario.crouching && !mario.jumping && mario.size == 2) mario.y += 8;}
+            if (e.key == "e" || e.key == "E" || e.key == "Shift") mario.keys.sprint = true;
+        })
+        document.addEventListener("keyup", (e) => {
+            if (e.key == "a" || e.key == "A" || e.key == "ArrowLeft") {mario.keys.left = false; mario.movementFromCrouch.left = false;}
+            if (e.key == "d" || e.key == "D" || e.key == "ArrowRight") {mario.keys.right = false; mario.movementFromCrouch.right = false;}
+            if (e.key == "w" || e.key == "W" || e.key == "ArrowUp" || e.key == " ") {mario.keys.up = false; mario.holdingJumpButton = false;}
+            if (e.key == "s" || e.key == "S" || e.key == "ArrowDown") {mario.keys.down = false; mario.standUp(); if (mario.size == 2) {mario.y -= 8; mario.h += 8}}
+            if (e.key == "e" || e.key == "E" || e.key == "Shift") mario.keys.sprint = false;
+        })
+        // Adding levels to worlds and worlds to game
+        //create level class to store 
+        //hold whatever variables (levels, chunks, tiles, etc) for referencing any part of the level inside the function
+        
+        Game.worlds = {
+            1: {// World 1
+                //this may need to be in a separate JS file (probably just put worlds into a separate file)
+                1: new Level(
+                    [ //tiles will be drawn row by row
+                        /*
+                            index and meaning:
+                            1: sprite index
+                            2: valid collision side index
+                            3: breakable value
+                            4: contents
+                            5: canCheckBelow
+                        */
+                        /*
+                            new way for tilemap:
+                                instead of indexes, just use a name like "brick" or "question"
+                        */
+                        [ , , , , [1, 11], , [4, 0], ],
+                        [ , , , , [2, 11], ],
+                        [ , , , , [2, 11], ],
+                        [ , , , , [2, 11], ],
+                        [ , , , , [2, 11], ],
+                        [ , , , , [2, 11], ],
+                        [ , , , , [2, 11], ],
+                        [ , , , , [2, 11], ],
+                        [ , , , , [2, 11], ],
+                        [ , , , , [2, 11], , , , ,],// , [2, 0, 1], , , , , , , [2, 0, 1]],
+                        [ , , , , [2, 11], , , , , , , [2, 0, 0, 6], [2, 0, 0, 6], [2, 0, 1], [2, 0, 1], [2, 0, 1], [2, 0, 1]],
+                        [ , , , , [2, 11], ],
+                        [ , , , , [2, 11], ],
+                        [ , , , , [2, 11], , , , , , /*[2, 0]*/, , , , , , , [2, 0, 1], , , , ],
+                        [ , , , , [2, 0], [4, 13, 1], [4, 13, 1], [4, 13, 1], [4, 13, 1], [4, 13, 1], [4, 13, 1], [4, 13, 1], [4, 13, 1], [4, 13, 1], [4, 13, 1], [4, 13, 1], [4, 13, 1], [4, 13, 1], [4, 13, 1], [4, 13, 1], [4, 13, 1], [4, 13, 1], [4, 13, 1], [4, 13, 1], [4, 13, 1], [4, 13, 1], [4, 13, 1], [4, 13, 1], [4, 13, 1], [4, 13, 1], [4, 13, 1], [4, 13, 1], [4, 13, 1], [4, 13, 1], [4, 13, 1], [4, 13, 1], [4, 13, 1], [4, 13, 1], [4, 13, 1], [4, 13, 1], [4, 13, 1], [4, 13, 1], [4, 13, 1], [4, 13, 1], [4, 13, 1], [4, 13, 1], [4, 13, 1], [4, 13, 1], ],
+                    ],
+                    //list for tiles used in the level
+                    /*List of all tiles used in level*/
+                    [
+                        /*
+                            For tiles that use multiple sprites,
+                            set interval in the tile class as an attribute to make them change their tile and colour (if necessary)
+                            and stop the interval when the tile shouldn't change as well as setting it to a specific tile that it needs to be stationary on after interval is cleared
+                        */
+                        /*
+                            Create Loop wherein at the start of each level, all possible variants of each tile are created.
+                            holds each tile in a separate list with each variant as an index within the list
+                            tilemap will need an extra value telling which tile variant to use
+
+                            alternatively, use the regular tiles, but have a separate array of collision combinations, using the second value in the tilemap to determine which combination is to be used
+                            for example,    using [0, 0] tells to use stairbrick with no collision
+                                            using [0, 16] tells to use stairbrick with all collision
+                            ther should be 16 possible combinations as there are 2 possible values per index and 4 indexes
+                        */
+                        // Blocks used
+                        preRenderAsset(sprites.tiles.groundAndStone.stairBrick, sprites.colours.overworld.groundAndStone),                               //0
+                        preRenderAsset(sprites.tiles.groundAndStone.crackedBrick, sprites.colours.overworld.groundAndStone),                             //1
+                        preRenderAsset(sprites.tiles.coins.question[1], sprites.colours.overworld.coins),                                                //2
+                        preRenderAsset(sprites.tiles.groundAndStone.brick1, sprites.colours.overworld.groundAndStone),                                   //3
+                        preRenderAsset(sprites.tiles.groundAndStone.emptyBrick, sprites.colours.overworld.groundAndStone),                               //4
+                        preRenderAsset(sprites.tiles.pipesAndScenery.pipe[1], sprites.colours.overworld.pipesAndScenery),                                //5
+                        preRenderAsset(sprites.tiles.pipesAndScenery.pipe[2], sprites.colours.overworld.pipesAndScenery),                                //6
+                        preRenderAsset(sprites.tiles.pipesAndScenery.pipe[3], sprites.colours.overworld.pipesAndScenery),                                //7
+                        preRenderAsset(sprites.tiles.pipesAndScenery.pipe[4], sprites.colours.overworld.pipesAndScenery),                                //8
+                        preRenderAsset(sprites.tiles.pipesAndScenery.pipe[5], sprites.colours.overworld.pipesAndScenery),                                //9
+                        preRenderAsset(sprites.tiles.pipesAndScenery.pipe[6], sprites.colours.overworld.pipesAndScenery),                                //10
+                        preRenderAsset(sprites.tiles.pipesAndScenery.pipe[7], sprites.colours.overworld.pipesAndScenery),                                //11
+                        preRenderAsset(sprites.tiles.pipesAndScenery.pipe[8], sprites.colours.overworld.pipesAndScenery),                                //12
+                        preRenderAsset(sprites.tiles.pipesAndScenery.pipe[9], sprites.colours.overworld.pipesAndScenery),                                //13
+                        preRenderAsset(sprites.tiles.pipesAndScenery.pipe[10], sprites.colours.overworld.pipesAndScenery),                               //14
+                        preRenderAsset(sprites.tiles.pipesAndScenery.flagpole[1], sprites.colours.overworld.pipesAndScenery),                            //15
+                        preRenderAsset(sprites.tiles.pipesAndScenery.flagpole[2], sprites.colours.overworld.pipesAndScenery),                            //16
+                        preRenderAsset(sprites.dynamicObjects.flags.pole, sprites.colours.overworld.items),                                              //17
+                        preRenderAsset(sprites.tiles.groundAndStone.castleTiles[1], sprites.colours.overworld.groundAndStone),                           //18
+                        preRenderAsset(sprites.tiles.groundAndStone.castleTiles[2], sprites.colours.overworld.groundAndStone),                           //19
+                        preRenderAsset(sprites.tiles.groundAndStone.castleTiles[3], sprites.colours.overworld.groundAndStone),                           //20
+                        preRenderAsset(sprites.tiles.groundAndStone.castleTiles[4], sprites.colours.overworld.groundAndStone),                           //21
+                        preRenderAsset(sprites.tiles.groundAndStone.castleTiles[5], sprites.colours.overworld.groundAndStone),                           //22
+                        preRenderAsset(sprites.tiles.groundAndStone.castleTiles[6], sprites.colours.overworld.groundAndStone),                           //23
+                        preRenderAsset(sprites.tiles.groundAndStone.castleTiles[7], sprites.colours.overworld.groundAndStone),                           //24
+                        // Background tiles used
+                    ],
+                    "overworld",
+                    [// Enemies/entities used
+                        //["goomba", 24, 13,], // Sprites, colours, hitboxes, etc will be predefined by the enemy type. Just give enemy and spawn coords
+                        ["koopa", 12, 8, "red"],
+                        //["parakoopa", 20, 10],
+                        //["plant", 20, 10],
+                        //["lakitu", 15, 5],
+                        //["fish", 15, 5, "red"],
+                    ]
+                ),
+            }
+        };
+
+        // Game loop stuff
+        Game.loop = setInterval(() => {
+            Game.clearCanvas();
+            canvas.beginPath();
+            canvas.fillStyle = "rgb(148, 138, 255)";
+            canvas.fillRect(0, 0, canvasElem.getAttribute("width"), canvasElem.getAttribute("height"));
+            bufferCanvas.beginPath();
+            bufferCanvas.fillStyle = "rgb(148, 138, 255)";
+           // bufferCanvas.fillRect(0, 0, canvasElem.getAttribute("width"), canvasElem.getAttribute("height"));
+
+            Game.moveAllEntities();
+
+            Game.drawObjects(Game.level);
+            
+            Game.level.enemies.forEach(e => e.draw())
+
+            // Update the camera position based on the player
+            camera.update();
+
+            // Apply camera transformation
+            camera.apply();
+
+            // Get the longest nested array (will be used for calculating level length)
+            const longestRow = Game.getLongestLow(Game.level.tiles);
+        }, 1000 / Game.fps);
+        initGame();
+        //mario.givePowerup(1);
+        //mario.givePowerup(2);
+        
+        //Game.items.push(new Coin(30, 30))
+        //Game.items.push(new Coin(250,150))
+        //will need to be called at the start of every level
+        /*
+            new collision check formula:
+                put all levls into 16x16 grid for collision checking
+                check which grid mario is within (using manipulated version of current collision algorithm)
+                check all tiles within that grid
+        */
+    </script>
+</body>
+</html>

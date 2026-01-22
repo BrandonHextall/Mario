@@ -1,0 +1,433 @@
+A Complete Guide to SMB's Physics Engine
+…..because I'm just that much of a nerd.
+Exhaustively put together by Jdaster64
+DISCLAIMER: This is all put in layman's terms, and is not 100% accurate to the original Super Mario
+Bros.'s physics engine from a coding perspective. That being said, if one were to make a physics
+engine based on these specifications, he'd probably end up with one heck of a reasonable facsimile
+(i.e. you wouldn't notice the difference at all in gameplay).
+To start, basically all of the physics in SMB + SMB2(j) are measured in the following units:
+Time: Frames (1/60 of a second, sorry PAL)
+Distance: Blocks, Pixels, Subpixels, Subsubpixels, Subsubsubpixels (each 1/16 of the
+previous length)
+Whenever I give a distance, velocity, or acceleration, I'll express it in the following form:
+00000
+in blocks, pixels, s.-pixels, ss.-pixels, and sss.-pixels, from left to right, where each goes from 0-F. A-F
+represent the numbers 10-15, as in hexadecimal; if you don't know how hex works, I suggest you look
+that up before reading on. More often than not, the blocks aren't going to be used.
+To minimize my confusion, I'll refer to directions in the same way that the game itself does:
+The x-axis is horizontal, and is positive to the right, negative to the left.
+The Y-axis is vertical, and is positive going DOWN, and negative going UP.
+Just think of a MS Paint document, where the top-left pixel is (0,0), and going x steps right and y
+left gives you (x,y).
+SMB PHYSICS 101 / GROUND PHYSICS
+Let's start with the basics; all of the numbers here are going to refer to the X-direction, being on
+the ground, and usually can be mirrored in any direction. Note well that the last two digits, subsub-
+and subsubsubpixels, does not factor into Mario's X-position; those are used only for more precise
+accelerations. Similarly, a speed of 000xx in the X-direction will not move Mario at all (furthermore,
+the XX from the previous frame stays if he somehow comes to a stop).
+Important notes: (This applies to ALL physics, not just ground movement) If at any time, Mario's
+current X-acceleration would cause his X-velocity to reach/exceed its current maximum, rather
+than doing so, his subsub- and subsubsubpixel values drop to 0. Similarly, for the 4-direction, his
+subpixels and lower drop to 0 if the current max 4-velocity is reached.
+Mario (SMB, SMB2j):
+Minimum walk velocity
+00130
+Maximum walk speed (normal,
+01900
+Walking acceleration
+00098
+castle cutscene)
+Maximum walk speed
+01100
+(underwater)
+Running acceleration
+000E4
+Maximum walk speed
+OODOO
+(level entry)
+Release deceleration
+000D0
+Maximum running speed**
+02900
+Skidding deceleration*
+001A0
+00900
+Skid turnaround speed***
+* Note that if you stop holding the opposite direction, but don't hit any other buttons, Mario/Luigi will continue slowing at
+this rate to 0.
+**If you stop holding "B", but continue holding your current movement direction, Mario will keep moving at run speed for 10
+frames
+then slow to walk speed instantly. This is why you don't lose any speed by firing fireballs while running.
+***The speed below or at which Mario/Luigi changes direction while skidding (ie. he doesn't come to a complete stop first).
+Luigi (SMB2 j):
+Minimum walk velocity
+000DO
+Maximum walk speed (normal,
+01900
+Walking acceleration
+00068
+castle cutscene)
+Maximum walk speed
+01100
+(underwater)
+Running acceleration
+000B4
+Maximum walk speed
+OODOO
+(level entry)
+Release deceleration
+000A0
+Maximum running speed**
+02900
+Skidding deceleration*
+00140
+Skid turnaround speed
+00900
+(Yes, pretty much all they did was subtract 00030 from Mario's accelerations and change a few other values accordingly)
+AIR PHYSICS
+Before we get into jump power and any 4-directional stuff, let's tackle the most easily messed-up
+part of SMB physics - air momentum, and its associated acceleration, deceleration, and preservation.
+Most importantly, let me state three things which ALWAYS hold true:
+1) Releasing the direction you are going in will keep your speed static, not
+slow you down!
+2) HOLDING/RELEASING THE "B" BUTTON HAS NO EFFECT ON MIDAIR
+MOMENTUM!!!!
+3) Midair physics underwater work EXACTLY how they do in air, same
+accelerations and all!
+With that out of the way, here are the values for midair momentum changes:
+Mario (SMB, SMB2j):
+Holding forward (gaining momentum)
+Current speed < 01900
+00098
+Holding backward (losing momentum)
+Current speed > 01900
+000E4
+Current speed > 01900
+000E4
+Current speed < 01900,
+started jump at > 01000
+000DO
+Current speed < 01900,
+started jump at < 01D00
+00098
+(No points for guessing what Luigi's values are going to be.)
+Luigi (SMB2j):
+Holding forward (gaining momentum)
+Holding backward (losing momentum)
+Current speed < 01900
+00068
+Current speed > 01900
+000B4
+Current speed > 01900
+000B4
+Current speed < 01900,
+000A0
+started jump at > 01000
+00068
+Current speed < 01900,
+started jump at < 01000
+Note that Mario/Luigi's max air speed is 01900 if he started the jump at less than that velocity, and
+02900 if more.
+JUMPING/VERTICAL PHYSICS
+Mario and Luigi seem to be gifted with the ability to briefly dispel the effects of gravity so long as
+they are moving upward. Basically, so long as they are moving upward in a jump, holding "A" will
+make them rise more slowly, allowing you to control the height of their jumps very effectively. To
+prevent the real-life uncontrollability of falling from several dozen feet up, their vertical downward
+velocity caps at 04800 in most cases, wrapping back to 04000 when exceeded.
+Mario (SMB, SMB2 j):
+Initial horizontal
+Speed (+x)
+Initial Velocity
+(-4)
+Holding "A"
+Gravity (+4)
+Falling
+Gravity (+4)
+Less than 01000
+01000024FF
+04000
+00200
+00700
+04000
+001E0
+00600
+02500 or greater
+05000
+00280
+00900
+Level entry
+00000
+00280
+00280
+Luigi (SMB2j):
+Initial horizontal
+Speed (+x)
+Less than 01000
+01000-024FF
+Initial Velocity
+Holding "A"
+(-4)
+Gravity (+4)
+Falling
+Gravity (+4)
+04000
+00180
+00440
+04000
+00180 003E0
+02500 or greater
+05000
+00220
+005D0
+Level entry
+00000
+00280
+00280
+Interestingly enough, running off of a ledge doesn't have a specific gravity; rather, it uses whatever
+the previous falling gravity was. This is easily evidenced at the start of stages like 4-4 in the Lost
+Levels, as running straight off the platform at the beginning results in you covering significantly more
+distance in midair than jumping, then running off of it.
+SWIMMING PHYSICS
+As mentioned before, underwater and ground levels have pretty similar physics; swimming is treated
+practically identically to jumping, but with lower gravity. Just like jumping, gravity values are only
+reset upon pressing "A", meaning that if you swim out of a whirlpool, you'll keep the lower gravity
+values. Also, oddly enough, Luigi's swimming physics are exactly the same as Mario's.
+Initial Velocity
+Initial horizontal
+Speed (+x)
+(-4)
+Holding "A"
+Gravity (+4)
+Falling
+Gravity (+4)
+Swim (normal)
+01800
+000DO
+000A0
+Swim (whirlpool zone)
+01000
+00040
+00090
+Swim (surface zone)
+01800
+00180
+00180
+MAK-50
+WORLD TIME
+5959
+MISCELLANEOUS PHYSICS
+The surface and whirlpool zones are as illustrated in the picture to the right,
+with all whirlpools extending exactly 1 block from the edges of a pit. Unlike
+other gravity changes, the above-mentioned 00180 "surface" gravity only
+applies while in or above the darkened segment at the top of the screen.
+Whirlpools also have some special effects on Mario's physics. While in the
+whirlpool zone (lighter blues), Mario's 4-speed caps at 01800, rather than
+04800, and an additional 00100 is added to his current gravity. In addition, if
+Mario has current POSITIVE Y-velocity of V, then his Y-position does not
+change by V every frame (as it would in any other case), but by the value
+(2V + Gravity). Furthermore, while in the whirlpool region, Mario is moved 1
+pixel towards the center of the pit every other frame.
+Some various physics-related values and such that don't fit into the aforementioned categories.
+Note that any instance of "XXX" means that the subpixel values and below are kept from the
+previous frame.
+Super Mario Bros.
+Velocity
+Gravity
+Ascending vine speed (-4)
+Desc. vine/flagpole speed (+4)
+Enemy stomp speed (-4)
+(Goombas, shelled enemies)
+Enemy stomp speed (-4)
+(Lakitu, H. Bro, C. Cheep, B. Bill)
+00E00 00000
+02000 00000
+04XXX
+03XXX
+Last*
+Last
+07000 Last**
+Trampoline (-4)
+Trampoline w/"A" (-4)
+"Soft" ceiling hit (unhit ? blocks,
+0C000
+Last
+00XXX
+Last
+bricks while small) (+4)****
+"Hard" ceiling hit (all others)
+01XXX
+Last
+(+4)
+Super Mario Bros 2 (J).
+Ascending vine speed (-4)
+Velocity
+00E00
+Gravity
+00000
+Desc. vine/flagpole speed (+4)
+02000
+00000
+Enemy stomp speed (-4)
+06XXX
+Last**
+(Most enemies)
+Enemy stomp speed (-4)
+08XXX
+Last
+(Floating Paratroopas)
+Trampoline (-4)
+Trampoline w/"A" (-4)
+Super Trampoline w/"A" (-4)
+"Soft" ceiling hit (unhit? blocks,
+07000 00700
+0C000
+00700
+20000 00700
+00XXX
+Last
+bricks while small) (+4)***
+"Hard" ceiling hit (all others)
+01xxx
+Last
+(+4)
+*The fact that enemy stomps don't have a fixed gravity means that if you stomp an enemy while moving upwards and still
+holding "A", you can continue to hold it to reduce your gravity, resulting in a ludicrous height boost (especially in SMB2j).
+**This means that a trampoline jump at walking speed will propel you much higher than one at running speed (SMB only)
+***The game changes your pixel unit two frames before hitting a block/ceiling, and calculates the difference between the
+replaced and replacement values, subtracting this number of pixels from your 4-position the next two frames.
+For example, say you are three frames away from a hit block with a velocity of -02000 and a gravity of 00700. Your
+speed the next frame will be 01700, but you will move distance of -01900. Then, your speed the next frame will be
+OTEOO, and you will move a distance of -01200. The next frame, your speed and change in distance will both be 02500.
+This pretty much sums up all of the player physics calculations in the original Super Mario Bros. and
+Super Mario Bros. 2 (J), with a few exceptions:
+- When caught in a wall and sliding out, Mario's X-speed does not change, but he moves by 1 pixel
+per frame. Note that if you start holding right, this does not apply, and you can walk/run as usual.
+- Wind (in SMB2j), similarly, does not factor into X-speed; rather, it moves Mario to the right at 1
+pixel every 2-4 frames (chosen at random).
+EXTRAS / DISTANCES
+These values/pictures shouldn't be used in programming a Super Mario Bros.-esque physics engine, but
+are results of the SMB engine, basically comparing various run, slide, and jump distances and the like.
+Note that all of these calculations are made with the assumption that the subpixel value is 0, with
+the exception of those involving fall speeds, which take the proper average/sum of subpixel values.
+Jump Heights/Distances
+Mario
+Max Height
+Distance
+Standing, no "A" held
+Standing, "A" held
+Walking, no "A" held
+Walking, "A" held
+Running, no "A" held
+Running, "A" held
+Luigi
+Standing, no "A" held
+Standing, "A" held
+Walking, no "A" held
+14500 00000
+42000 00000
+17600 22800
+46460 57000
+18c00
+52800
+Max Height
+38000
+8E800
+Distance
+21100
+57580 00000
+00000
+23100 34800
+57580 6D800
+48800
+Walking, "A" held
+Running, no "A" held
+24F10
+Running, "A" held
+60A20
+AA000
+MARIO
+When Mario jumps, he can clear the height of four blocks on a normal run and five on a
+dash, which works out to a 25% dash boost. He can also stop with accuracy.
+NORMAL JUMP‣4 BLOCKS DASH JUMP 5 BLOCKS
+00000000
+SLIP 2 BLOCKS
+LUIGI
+Luigi clears the height of 5.5 blocks on a normal run and six while dashing. This gives
+him a 9% dash boost. His four block slide makes stopping a chore.
+NORMAL 5.5 BLOCKS
+DASH JUMP 6 BLOCKS
+SLIP 4 BLOCKS
+0000000
+(Hey, not bad, SMAS Player's Guide! Except Luigi's skid which is all you should care about, is actually just under 3 blocks)
+Enemy Bounce Heights
+Initial -4 Velocity
+03000
+03000, super bounce
+04000
+04000, super bounce
+06000
+06000, super bounce
+08000
+Mario
+Walking
+Running
+Standing
+OBDOO
+0D800 09900
+25800 27EAO 1E500
+14500 17600 10400
+42000 46460 35380
+2c300
+93000
+33000 23100
+9c9c0 76380
+59600
+4D300
+08000, super bounce 104000 115140
+3CF00
+DODOO
+(Yes, the super bounce can get you an entire 16-block screen high/)
+Luigi
+Initial - Velocity
+03000
+03000, super bounce
+04000
+04000, super bounce
+06000
+Standing
+Walking
+Running
+12FC0 141c0 ODECO
+31800 31800 23660
+21100 23100 18060
+57580 57580 ЗЕЗЕО
+48D80 4D580 34980
+06000, super bounce C3000 C3000 8A8A0
+80200 88220 5c170
+159580 159580
+08000
+08000, super bounce
+Trampoline Bounce Heights
+(keep in mind that Trampolines always have a gravity of standing speed in SMB2j)
+Trampoline Type & X-Speed
+Max Height
+3B800
+F4F40
+Distance
+No "A", Standing speed
+No "A", Walking speed
+No "A", Running speed
+44E00
+00000
+3F000
+2F200 48800
+Red, "A", Standing speed AAAOO 00000
+Red, "A", Walking speed
+Red, "A", Running speed
+Green, "A", Walking speed
+C6000 81000
+86100
+93800
+4A2500|21c000
+Green, "A", Running speed 4A2500 384000
+(Yes, nearly EIGHTY BLOCKS in the air; most of that 360-FRAME airtime is while falling)

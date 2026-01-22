@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Delta Time Example</title>
+  <style>
+    #gameCanvas {
+      border: 1px solid black;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="gameCanvas" width="800" height="600"></canvas>
+  <script>
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    let lastFrameTime = 0;
+
+    let player = {
+      position: { x: 50, y: 50 },
+      speed: 100 // units per second
+    };
+
+    function updateGameState(deltaTime) {
+      // Update player position
+      player.position.x += player.speed * deltaTime;
+      player.position.y += player.speed * deltaTime;
+
+      // Ensure the player stays within the canvas bounds
+      if (player.position.x > canvas.width) player.position.x = 0;
+      if (player.position.y > canvas.height) player.position.y = 0;
+    }
+
+    function renderGame() {
+      // Clear the canvas
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      // Draw the player
+      ctx.fillStyle = 'blue';
+      ctx.fillRect(player.position.x, player.position.y, 50, 50);
+    }
+
+    function gameLoop(currentTime) {
+      // Calculate delta time in seconds
+      const deltaTime = (currentTime - lastFrameTime) / 1000;
+      lastFrameTime = currentTime;
+
+      // Normalize delta time to 60 FPS
+      const normalizedDeltaTime = deltaTime * 60;
+
+      // Update game state with normalized delta time
+      updateGameState(normalizedDeltaTime);
+
+      // Render game
+      renderGame();
+
+      // Request the next frame
+      requestAnimationFrame(gameLoop);
+    }
+
+    // Start the game loop
+    requestAnimationFrame(gameLoop);
+  </script>
+</body>
+</html>
