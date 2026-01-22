@@ -1442,7 +1442,6 @@
                         }
                     }
                 })
-                Game.log(Game.level.enemies)
             }
             
             // Checks how many lives mario has. will either take away a life and check if game over, or just check game over
@@ -1568,7 +1567,7 @@
                 let tiles = Game.level.tiles,
                     iX = Math.floor(this.x / 16),
                     iY = Math.floor(this.y / 16);
-                if (iX > tiles[0].length || iY > tiles.length) return;
+                if (iX > tiles[0].length || iY > tiles.length || iX <= 1 || iY <= 0) return;
                 let t1 = tiles[iY][iX - 1],
                     t2 = tiles[iY][iX + 1];
                 if (t1 instanceof Tile && t2 instanceof Tile) {
@@ -1598,6 +1597,50 @@
 
             //@Override
             changeDirection() {}
+        }
+
+        class Beetle extends Enemy {
+            constructor(x, y) {
+                super(
+                    x, y,
+                    2, 1, 12, 12, // hitbox changes to 2, 0, 12, 12 when in shell
+                    assets.overworld.enemies.beetle.inshell,
+                    "beetle"
+                )
+            }
+        }
+
+        class Squid extends Enemy {
+            constructor(x, y,) {
+                super(
+                    x, y,
+                    3, 12, 10, 5,
+                    assets.overworld.enemies.squid.normal,
+                    "squid"
+                )
+            }
+        }
+
+        class Bullet extends Enemy {
+            constructor(x, y) {
+                super(
+                    x, y,
+                    3, 7, 10, 6,
+                    assets.overworld.enemies.bullet,
+                    "bullet", 0
+                )
+            }
+        }
+
+        class Hammer extends Enemy {
+            constructor(x, y) {
+                super(
+                    x, y,
+                    1, 1, 8, 8,
+                    assets.overworld.enemies.hammer[1],
+                    "hammer", 0
+                )
+            }
         }
 
         // Koopa class
@@ -1660,34 +1703,12 @@
             }
         }
 
-        class Beetle extends Enemy {
-            constructor(x, y) {
-                super(
-                    x, y,
-                    1, 1, 8, 8,
-                    assets.overworld.enemies.beetle.walk[1],
-                    "beetle"
-                )
-            }
-        }
-
-        class Squid extends Enemy {
-            constructor(x, y,) {
-                super(
-                    x, y,
-                    1, 1, 8, 8,
-                    assets.overworld.enemies.squid.normal,
-                    "squid"
-                )
-            }
-        }
-
         class Plant extends Enemy {
             constructor(x, y) {
                 super(
                     x, y,
                     3, 14, 10, 6,
-                    assets.overworld.enemies.plant.green[1].l,
+                    assets.overworld.enemies.plant.green[1],
                     "plant", 0
                 )
             }
@@ -1704,7 +1725,7 @@
                 super(
                     x, y,
                     2, 9, 12, 12,
-                    assets.overworld.enemies.lakitu.green[1].l,
+                    assets.overworld.enemies.lakitu.green[1],
                     "lakitu", 0 
                 )
                 this.canBeJumpedOn = true;
@@ -1758,51 +1779,6 @@
             }
         }
 
-        class Bullet extends Enemy {
-            constructor(x, y) {
-                super(
-                    x, y,
-                    1, 1, 8, 8,
-                    assets.overworld.enemies.bullet,
-                    "bullet", 0
-                )
-            }
-        }
-
-        class Flame extends Enemy {
-            constructor(x, y) {
-                super(
-                    x, y,
-                    1, 1, 8, 8,
-                    assets.overworld.enemies.flame[1],
-                    "flame", 0
-                )
-            }
-        }
-
-        class Spiny extends Enemy {
-            constructor(x, y, lakituSpawn = false) {
-                super(
-                    x, y,
-                    1, 1, 8, 8,
-                    assets.overworld.enemies.spiny[lakituSpawn ? "ball" : "walk"][1],
-                    "spiny"
-                )
-            }
-        }
-
-        // To avoid confusion, this class is for the large fireballs that jump out of lava, compared to the small fireballs that mario throws
-        class LavaBall extends Enemy {
-            constructor(x, y) {
-                super(
-                    x, y,
-                    1, 1, 8, 8,
-                    assets.overworld.enemies.fireball,
-                    "lavaball"
-                )
-            }
-        }
-
         class Bowser extends Enemy {
             constructor(x, y, colour) {
                 super(
@@ -1850,14 +1826,26 @@
             }
         }
 
+        class Flame extends Enemy {
+            constructor(x, y) {
+                super(
+                    x, y,
+                    6, 4, 4, 4,
+                    assets.overworld.enemies.flame[1],
+                    "flame", 0
+                )
+            }
+        }
+
         class Spiny extends Enemy {
             constructor(x, y) {
                 super(
                     x, y,
-                    2, 9, 12, 12,
+                    3, 6, 10, 6,
                     assets.overworld.enemies.spiny.walk[1],
                     0, "spiny"
                 )
+                this.sprite = assets.overworld.enemies.spiny.walk[1].r;
             }
             //doesnt need a modified moveEnt() as it is a basic enemy (only when thrown down by a Lakitu does it need to be different)
             spawnFromLakitu() {
@@ -1865,13 +1853,13 @@
             }
         }
 
-        class EnemyFireball extends Enemy {
+        class LavaBall extends Enemy {
             constructor(x, y) {
                 super(
                     x, y,
-                    2, 9, 12, 12,
+                    3, 6, 10, 6,
                     assets.overworld.enemies.fireball,
-                    0, "fireball"
+                    "lavaball"
                 )
             }
         }
@@ -2391,14 +2379,21 @@
                         case "goomba": 
                             this.enemies.push(new Goomba(e[1], e[2]));
                             break;
+                        case "beetle":
+                            this.enemies.push(new Beetle(e[1], e[2]));
+                            break;
+                        case "squid":
+                            this.enemies.push(new Squid(e[1], e[2]));
+                            break;
+                        case "bullet":
+                            this.enemies.push(new Bullet(e[1], e[2]));
+                            break;
+                        case "hammer":
+                            this.enemies.push(new Hammer(e[1], e[2]));
+                            break;
                         case "koopa":
                             this.enemies.push(new Koopa(e[1], e[2], e[3]));
                             break;
-                        case "beetle":
-                            this.enemies,push(new Beetle(e[1], e[2]));
-                            break;
-                        case "squid":
-                            this.enemies.push(new Squid(e[1], e[2]))
                         case "parakoopa":
                             this.enemies.push(new Parakoopa(e[1], e[2]));
                             break;
@@ -2417,11 +2412,14 @@
                         case "bowser":
                             this.enemies.push(new Bowser(e[1], e[2], e[3]));
                             break;
+                        case "flame":
+                            this.enemies.push(new Flame(e[1], e[2]));
+                            break;
                         case "spiny":
                             this.enemies.push(new Spiny(e[1], e[2]));
                             break;
-                        case "fireball":
-                            this.enemies.push(new EnemyFireball(e[1], e[2]));
+                        case "lavaball":
+                            this.enemies.push(new LavaBall(e[1], e[2]));
                             break;
                     }
                 })
@@ -2608,7 +2606,7 @@
             //Draw enemies
             level.enemies.forEach(e => {
                 e.draw();
-                e.drawHitbox("black");
+                e.drawHitbox("green");
             })
 
             // Draw mario
@@ -2670,6 +2668,7 @@
         //create level class to store 
         //hold whatever variables (levels, chunks, tiles, etc) for referencing any part of the level inside the function
         
+        let goomba = "goomba", koopa = "koopa", parakoopa = "parakoopa", plant = "plant", lakitu = "lakitu", fish = "fish", bro = "bro", bowser = "bowser", beetle = "beetle", squid = "squid", bullet = "bullet", flame = "flame", spiny = "spiny", lavaball = "lavaball";
         Game.worlds = {
             1: {// World 1
                 //this may need to be in a separate JS file (probably just put worlds into a separate file)
@@ -2751,20 +2750,20 @@
                     ],
                     "overworld",
                     [// Enemies/entities used
-                        //["goomba", 24, 13,], // Sprites, colours, hitboxes, etc will be predefined by the enemy type. Just give enemy and spawn coords
-                        //["koopa", 12, 8, "red"],
-                        //["parakoopa", 20, 10],
-                        //["plant", 20, 10],
-                        //["lakitu", 15, 5],
-                        //["fish", 1, 1, "red"],
-                        //["bro", 1, 1, "red"],
-                        //["bowser", 18, 5, "green"],
-                        ["beetle", 1, 1],
-                        ["squid", 1, 1],
-                        ["bullet", 1, 1],
-                        ["flame", 1, 1],
-                        ["spiny", 1, 1],
-                        ["lavaball", 1, 1]
+                        //[goomba, 24, 13,], // Sprites, colours, hitboxes, etc will be predefined by the enemy type. Just give enemy and spawn coords
+                        //[koopa, 12, 8, "red"],
+                        //[parakoopa, 20, 10],
+                        //[plant, 20, 10],
+                        //[lakitu, 15, 5],
+                        //[fish, 1, 1, "red"],
+                        //[bro, 1, 1, "red"],
+                        //[bowser, 18, 5, "green"],
+                        //[beetle, 1, 1],
+                        //[squid, 1, 1],
+                        //[bullet, 1, 1],
+                        //[flame, 1, 1],
+                        //[spiny, 1, 1],
+                        //[lavaball, 1, 1]
                     ]
                 ),
             }
