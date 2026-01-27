@@ -338,7 +338,7 @@
                         if (tile.validCollisionSides[1] && !this.collisions.left) {
                             this.collisions.left = true;
                             this.setX(tile.x + tile.w);
-                            if (isMario) {
+                            if (this instanceof Mario) {
                                 this.velocityX = 0;
                                 this.accelerationX = 0;
                             } else this.speed *= -1;
@@ -348,7 +348,7 @@
                         if (tile.validCollisionSides[0] && !this.collisions.right) {
                             this.collisions.right = true;
                             this.setX(tile.x - this.w);
-                            if (isMario) {
+                            if (this instanceof Mario) {
                                 this.velocityX = 0;
                                 this.accelerationX = 0;
                             } else this.speed *= -1;
@@ -359,7 +359,7 @@
                             this.collisions.top = true;
                             this.setY(tile.y + tile.h);
                             this.velocityY *= -1;//0.5;
-                            if (isMario) {
+                            if (this instanceof Mario) {
                                 this.execTileHit(tile)
                             }
                         }
@@ -1302,6 +1302,7 @@
                 }
                 super.moveEnt();
                 this.runEnemyCollision();
+                this.sprite = assets.overworld.mario.normal[this.size == 1 ? "small" : "big"][this.crouching ? "crouch" : "stand"][this.direction]
             }
 
             // spawns tile contents or destroys it
@@ -1370,7 +1371,10 @@
             // Changes mario based on his size
             hit() {
                 Game.level/*worlds[Game.currentWorld][Game.currentLevel]*/.enemies.forEach(enemy => {
-                    if (this.activeStar) return false;
+                    if (this.activeStar) {
+                        //run enemy death
+                        return false;
+                    }
                     if (this.checkIfTouching(enemy)) {
                         switch (this.size) {
                             case 2: // Tall mario
@@ -1425,6 +1429,7 @@
                      * else hit mario
                     */
                     this.collisionSide = this.checkCollisionSide(ent);
+                    Game.log(this.collisionSide)
                 }
             }
 
@@ -1432,12 +1437,17 @@
                 Game.level.enemies.forEach(ent => {
                     if (ent instanceof Entity) {
                         this.checkEnemyCollision(ent);
-                        if (ent instanceof Bowser) { // Same logic except it switches between the two hitboxes
-                            if (this.collisionSide) ent.runCollisionResult();
-                            else {
-                                ent.changeHitbox();
-                                this.checkEnemyCollision(ent);
-                                if (this.collisionSide) ent.runCollisionResult();
+                        if (ent instanceof Enemy) {
+
+                            if (ent instanceof Bowser) { // Same logic except it switches between the two hitboxes
+                                if (this.collisionSide) this.hit();
+                                else {
+                                    ent.changeHitbox();
+                                    this.checkEnemyCollision(ent);
+                                    if (this.collisionSide) this.hit();
+                                }
+                            } else {
+                                if (this.collisionSide) this.hit();
                             }
                         }
                     }
@@ -1448,6 +1458,13 @@
             checkLives() {
                 // If lives == 0, game over
                 // Else restart from checkpoint (reset size)
+            }
+
+            // Updates hitboxes
+            //@Override
+            updateHitboxes() {
+                this.hitbox.x = this.x + this.hitboxOffsets.x
+                this.hitbox.y = this.y + this.hitboxOffsets.y;
             }
         }
         
@@ -2750,7 +2767,7 @@
                     ],
                     "overworld",
                     [// Enemies/entities used
-                        //[goomba, 24, 13,], // Sprites, colours, hitboxes, etc will be predefined by the enemy type. Just give enemy and spawn coords
+                        [goomba, 12, 13,], // Sprites, colours, hitboxes, etc will be predefined by the enemy type. Just give enemy and spawn coords
                         //[koopa, 12, 8, "red"],
                         //[parakoopa, 20, 10],
                         //[plant, 20, 10],
