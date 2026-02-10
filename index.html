@@ -57,7 +57,7 @@
                 All entities are 1 pixel into tiles so EITHER :
                     Give tiles a hitbox
                         OR
-                    force entities 1 pixel into tiles
+                    draw entities 1 pixel into tiles
                 Make entities render after tiles so they appear on top
                 Find a way to draw mario when moving left (and spawn fireballs to the left) (probably check what direction mario is moving and if left, start from the end of the sprite instead of the left)
 
@@ -487,8 +487,6 @@
 
                 this.updateCoords();
                 this.largeLevelHitboxCollision();
-
-                if (this instanceof Mario) this.addY(-marioYposIncrement);
                 
                 // Checking tile collision
 
@@ -510,16 +508,9 @@
                         this.updateHitboxes();
                     }
                 }
-                if (this instanceof Mario) this.addY(marioYposIncrement);
-                if (!this instanceof Parakoopa) {
+                if (!(this instanceof Parakoopa)) {
                     if (!this.collisions.bottom) this.gravity = this.fallingGravity;
                     else this.gravity = this.originalGravity;
-                }
-
-                // Mario crouch stuff
-                if (this instanceof Mario) {
-                    if (this.size == 2 && this.keys.down) this.crouch();
-                    else if (this.crouching && !this.keys.down) this.standUp();
                 }
 
                 //try using Math.floor() when drawing tiles, as this may help with visual clarity and do the same with mario
@@ -1244,6 +1235,18 @@
                     }
                 }
             }
+
+            moveEnt() {
+                let levelTiles = Game.level.tiles,
+                    marioYposIncrement = 1;
+                    this.updateCoords();
+                    this.largeLevelHitboxCollision();
+                    this.addY(-marioYposIncrement);
+                    super.moveEnt();
+                    this.addY(marioYposIncrement);
+                    if (this.size == 2 && this.keys.down) this.crouch();
+                    else if (this.crouching && !this.keys.down) this.standUp();
+            }
             
             // Enables crouching
             crouch() {
@@ -1369,13 +1372,20 @@
             }
 
             // Changes mario based on his size
-            hit() {
-                Game.level/*worlds[Game.currentWorld][Game.currentLevel]*/.enemies.forEach(enemy => {
+            hitPlayer() {
+                if (this.activeStar) {
+                    //run enemy death
+                    return false;
+                }
+                //if (this.checkIfTouching(enemy)) {
+                if (this.collisionSide != "top") {
                     if (this.activeStar) {
-                        //run enemy death
-                        return false;
-                    }
-                    if (this.checkIfTouching(enemy)) {
+                        //kill enemy
+                    } else {
+                        //hit mario
+                        //use givepowerup()
+                        //this.givePowerup(0);
+                    
                         switch (this.size) {
                             case 2: // Tall mario
                                 // Mario's sprite needs to be changed to standing for the shrink animation
@@ -1406,11 +1416,11 @@
                                 return true;
                         }
                     }
-                })
+                }
             }
 
             checkIfTouchingEntityHitbox(ent) {
-                if (!ent instanceof Entity) return false;
+                if (!(ent instanceof Entity)) return false;
                 return !(
                     this.hitbox.x > ent.hitbox.x + ent.hitbox.w ||
                     this.hitbox.x + this.hitbox.w < ent.hitbox.x ||
@@ -1420,7 +1430,7 @@
             }
 
             checkEnemyCollision(ent) {
-                if (! ent instanceof Entity) return;
+                if (! (ent instanceof Entity)) return;
                 if (this.checkIfTouchingEntityHitbox(ent)) {
                     /**
                      * check entity type
@@ -1428,8 +1438,8 @@
                      * if top, hit enemy
                      * else hit mario
                     */
-                    this.collisionSide = this.checkCollisionSide(ent);
-                    Game.log(this.collisionSide)
+                    ent.collisionSide = this.checkCollisionSide(ent);
+                    //Game.log(ent.collisionSide + 2)
                 }
             }
 
@@ -1437,17 +1447,17 @@
                 Game.level.enemies.forEach(ent => {
                     if (ent instanceof Entity) {
                         this.checkEnemyCollision(ent);
+                        Game.log(ent.collisionSide + 3);
                         if (ent instanceof Enemy) {
-
                             if (ent instanceof Bowser) { // Same logic except it switches between the two hitboxes
-                                if (this.collisionSide) this.hit();
+                                if (this.collisionSide) this.hitPlayer();
                                 else {
                                     ent.changeHitbox();
                                     this.checkEnemyCollision(ent);
-                                    if (this.collisionSide) this.hit();
+                                    if (this.collisionSide) this.hitPlayer();
                                 }
                             } else {
-                                if (this.collisionSide) this.hit();
+                                if (ent.collisionSide) this.hitPlayer();
                             }
                         }
                     }
@@ -1480,13 +1490,13 @@
                     sprite
                 );
                 //initial velocity must be negative else enemies will walk away from mario
-                this.speed = -velocity;
-                this.originalSpeed = -velocity;
+                this.speed = 0//-velocity;
+                this.originalSpeed = 0//-velocity;
                 this.velocityY = 0;
                 this.type = type; // Ground, Air, Water, etc. Used to ensure collision doesn't run unnecessarily
-                this.gravity = mario.physics.jumpPhysics.lower.fallingGravity * 2; //Might differ per enemy type, might not
-                this.fallingGravity = mario.physics.jumpPhysics.lower.fallingGravity / 2; //Might differ per enemy type, might not
-                this.originalGravity = this.gravity;
+                this.gravity = 0//mario.physics.jumpPhysics.lower.fallingGravity * 2; //Might differ per enemy type, might not
+                this.fallingGravity = 0//mario.physics.jumpPhysics.lower.fallingGravity / 2; //Might differ per enemy type, might not
+                this.originalGravity = 0//this.gravity;
                 this.horizontalCollision = false;
                 this.canBeJumpedOn = false;
                 this.spawned = false;
@@ -1572,7 +1582,7 @@
                 */
             }
 
-            // When mario hits enemy underneath a tile
+            // When mario hits enemy underneath a tile, causing the enemy to take damage/die (if applicable) and jump up
             hitBottom() {
                 /*
                     Check enemy instance: Goomba, Koopa, ParaKoopa, Buzzy Beetle, Spiny, Hammer Bro. the rest don't do anything (as far as I know)
@@ -1673,6 +1683,7 @@
                 this.velocityY = 0;
                 this.gravity = mario.physics.jumpPhysics.lower.fallingGravity / 2;
                 this.colour = colour;
+                this.inShell = false;
             }
 
             // Koopa in shell. being hit pushes it in required direction, can kill other enemies
@@ -1694,6 +1705,29 @@
                     this.originalSpeed = this.speed;
                 }
             }
+
+            moveEnt() {
+                this.speed = 0;
+                this.originalSpeed = 0;
+                this.collisions.bottom = true;
+                super.moveEnt();
+                Game.log(this.collisionSide + 1);
+                if (this.collisionSide == "bottom" || this.collisionSide == "left" || this.collisionSide == "right") {
+                    Game.log("x")
+                    if (this.inShell) {
+                        Game.log("y")
+                        //if (this.speed != 0) {
+                            // Sets shell speed depending on which side mario hit it from
+                            let direction = this.collisionSide == "left" ? "l" : this.collisionSide == "right" ? "r" : "";
+                            if (!direction) {
+                                let diff = this.x - mario.x;
+                                Game.log(diff);
+                            }
+                                
+                        //}
+                    } else this.inShell = true
+                }
+            }
         }
 
         // ParaKoopa class
@@ -1710,10 +1744,6 @@
 
             setParakoopaVelocity() {
                 this.velocityY = -mario.physics.jumpPhysics.lower.holdingJumpGravity * 30;
-            }
-
-            hit() {
-
             }
             loseWings() {
 
@@ -2265,7 +2295,7 @@
                 // Used to hit enemies with fireballs (with own checkIfTouching)
                 /*Game.level.enemies.forEach(enemy => {
                     if (this.isTouching(enemy)) {
-                        enemy.hit();
+                        enemy.hitEnemy();
                         mario.fireballs.splice(mario.fireballs.indexOf(this), 1);
                     }
                 })*/
@@ -2273,7 +2303,7 @@
                 // Used to hit enemies with fireballs (with Entity checkIfTouching)
                 Game.level.enemies.forEach(enemy => {
                     if (this.checkIfTouching(enemy)) {
-                        enemy.hit();
+                        enemy.hitEnemy();
                         mario.fireballs.splice(mario.fireballs.indexOf(this), 1);
                     }
                 })
@@ -2622,8 +2652,10 @@
 
             //Draw enemies
             level.enemies.forEach(e => {
-                e.draw();
-                e.drawHitbox("green");
+                if (e instanceof Enemy) {
+                    e.draw();
+                    e.drawHitbox("green");
+                }
             })
 
             // Draw mario
@@ -2767,8 +2799,8 @@
                     ],
                     "overworld",
                     [// Enemies/entities used
-                        [goomba, 12, 13,], // Sprites, colours, hitboxes, etc will be predefined by the enemy type. Just give enemy and spawn coords
-                        //[koopa, 12, 8, "red"],
+                        //[goomba, 12, 13,], // Sprites, colours, hitboxes, etc will be predefined by the enemy type. Just give enemy and spawn coords
+                        [koopa, 9.5, 11, "red"],
                         //[parakoopa, 20, 10],
                         //[plant, 20, 10],
                         //[lakitu, 15, 5],
