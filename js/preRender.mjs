@@ -2,7 +2,7 @@
 var count = 0;
 //edit function so that any sprites facing right are swapped, ensuring they are facing the correct way when being drawn
 
-export function preRenderAsset(tile, palette, swapDirection = false) {
+export default function preRenderAsset(tile, palette, swapDirection = false) {
     let rowLengths = [];
     /*if (swapDirection) {
         const originalSprite = tile;

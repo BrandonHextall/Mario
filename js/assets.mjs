@@ -1,6 +1,6 @@
-import {preRenderAsset} from "./preRender.mjs";
-import {array} from "./tilemaps.mjs";
-export var assets = {
+import preRenderAsset from "./preRender.mjs";
+import array from "./tilemaps.mjs";
+const assets = {
     overworld: {
         mario: {
             // Overworld colours
@@ -2190,3 +2190,4 @@ export var assets = {
         }
     }
 }
+export default assets;

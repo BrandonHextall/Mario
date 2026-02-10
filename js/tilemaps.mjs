@@ -1,4 +1,4 @@
-export const array = {
+const tilemaps = {
     colours: {
         //possibly need to cut colour scheme down into different smaller groups like flower, mushroom, star, etc.
         //same palette for shroom, star, and flower (except stem so add extra colour at end for stem)
@@ -5278,3 +5278,4 @@ export const array = {
         }
     }
 }
+export default tilemaps;
